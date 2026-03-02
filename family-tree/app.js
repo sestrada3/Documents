@@ -869,7 +869,60 @@ function layoutTree() {
     byGen.get(gen).push(id);
   });
 
-  // ── Step 6: Sort each generation, keeping linked nodes adjacent ──
+  // ── Step 6: Smart column ordering — barycenter method ────────
+  // Pulls parents above their children and children below their parents,
+  // including non-spouse parents. Then enforces spouse adjacency.
+  const genNums = [...byGen.keys()].sort((a, b) => a - b);
+
+  // Run 3 full sweeps (top-down + bottom-up) to converge on good positions
+  for (let sweep = 0; sweep < 3; sweep++) {
+
+    // Top-down pass: sort gen N by average column index of its children in gen N+1
+    genNums.forEach(gen => {
+      const nextGen = gen + 1;
+      if (!byGen.has(nextGen)) return;
+      const ids     = [...byGen.get(gen)];
+      const nextIds = byGen.get(nextGen);
+
+      ids.sort((a, b) => {
+        const childrenInNext = id => (getPerson(id)?.children || []).filter(c => nextIds.includes(c));
+        const avg = id => {
+          const ch = childrenInNext(id);
+          return ch.length ? ch.reduce((s, c) => s + nextIds.indexOf(c), 0) / ch.length : null;
+        };
+        const pa = avg(a), pb = avg(b);
+        if (pa === null && pb === null) return 0;
+        if (pa === null) return 1;   // push no-child nodes to the right
+        if (pb === null) return -1;
+        return pa - pb;
+      });
+      byGen.set(gen, ids);
+    });
+
+    // Bottom-up pass: sort gen N by average column index of its parents in gen N-1
+    [...genNums].reverse().forEach(gen => {
+      const prevGen = gen - 1;
+      if (!byGen.has(prevGen)) return;
+      const ids     = [...byGen.get(gen)];
+      const prevIds = byGen.get(prevGen);
+
+      ids.sort((a, b) => {
+        const parentsInPrev = id => (getPerson(id)?.parents || []).filter(p => prevIds.includes(p));
+        const avg = id => {
+          const prs = parentsInPrev(id);
+          return prs.length ? prs.reduce((s, p) => s + prevIds.indexOf(p), 0) / prs.length : null;
+        };
+        const pa = avg(a), pb = avg(b);
+        if (pa === null && pb === null) return 0;
+        if (pa === null) return 1;
+        if (pb === null) return -1;
+        return pa - pb;
+      });
+      byGen.set(gen, ids);
+    });
+  }
+
+  // Spouse adjacency pass — after barycenter, keep couples side-by-side
   byGen.forEach((ids, gen) => {
     const ordered = [];
     const placed  = new Set();
@@ -878,7 +931,6 @@ function layoutTree() {
       placed.add(id);
       ordered.push(id);
       const p = getPerson(id);
-      // Keep spouses side by side
       if (p && p.spouses) {
         p.spouses.forEach(sid => {
           if (ids.includes(sid) && !placed.has(sid)) { placed.add(sid); ordered.push(sid); }
