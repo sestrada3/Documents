@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Family Tree Generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="header-inner">
+      <div class="logo">🌳 Family Tree Generator</div>
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="tree">🌳 Family Tree</button>
+        <button class="tab-btn" data-tab="people">👥 People</button>
+        <button class="tab-btn" data-tab="glossary">📖 Glossary</button>
+      </nav>
+      <div class="header-actions">
+        <button class="btn btn-secondary" id="importBtn">⬆ Import</button>
+        <button class="btn btn-secondary" id="exportBtn">⬇ Export</button>
+        <input type="file" id="importFile" accept=".json" style="display:none"/>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main>
+
+    <!-- ===== TREE TAB ===== -->
+    <section id="tab-tree" class="tab-content active">
+      <div class="tree-toolbar">
+        <button class="btn btn-primary" id="addPersonTreeBtn">+ Add Person</button>
+        <div class="zoom-controls">
+          <button class="btn btn-icon" id="zoomIn" title="Zoom In">＋</button>
+          <button class="btn btn-icon" id="zoomOut" title="Zoom Out">－</button>
+          <button class="btn btn-icon" id="zoomReset" title="Reset View">⌂</button>
+        </div>
+        <span class="tree-hint">Drag to pan &bull; Scroll to zoom &bull; Click a person to view details</span>
+      </div>
+      <div class="tree-wrapper" id="treeWrapper">
+        <svg id="treeSvg" class="tree-svg" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
+            </marker>
+          </defs>
+          <g id="svgLines"></g>
+        </svg>
+        <div class="tree-canvas" id="treeCanvas">
+          <!-- Person node cards rendered here by JS -->
+        </div>
+        <div class="tree-empty" id="treeEmpty">
+          <div class="empty-icon">🌱</div>
+          <h2>Your family tree is empty</h2>
+          <p>Start by adding a person using the button above.</p>
+          <button class="btn btn-primary" id="addPersonEmptyBtn">+ Add First Person</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== PEOPLE TAB ===== -->
+    <section id="tab-people" class="tab-content">
+      <div class="people-toolbar">
+        <h2>All People</h2>
+        <button class="btn btn-primary" id="addPersonPeopleBtn">+ Add Person</button>
+      </div>
+      <div class="people-grid" id="peopleGrid">
+        <!-- Person cards rendered here -->
+      </div>
+      <div class="tree-empty hidden" id="peopleEmpty">
+        <div class="empty-icon">👨‍👩‍👧‍👦</div>
+        <h2>No people added yet</h2>
+        <p>Add your first family member to get started.</p>
+      </div>
+    </section>
+
+    <!-- ===== GLOSSARY TAB ===== -->
+    <section id="tab-glossary" class="tab-content">
+      <div class="glossary-header">
+        <h2>📖 Relationship Glossary</h2>
+        <p>A comprehensive guide to family relationship terms and what they mean.</p>
+        <input type="text" class="glossary-search" id="glossarySearch" placeholder="🔍  Search terms…" />
+      </div>
+      <div class="glossary-body" id="glossaryBody">
+        <!-- Populated by JS -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== ADD / EDIT PERSON MODAL ===== -->
+  <div class="modal-overlay hidden" id="personModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Add Person</h3>
+        <button class="modal-close" id="modalClose" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Photo Upload -->
+        <div class="photo-upload-area" id="photoUploadArea" title="Click to upload a photo">
+          <img id="photoPreview" src="" alt="Photo Preview" />
+          <div class="photo-placeholder" id="photoPlaceholder">
+            <span class="photo-icon">📷</span>
+            <span>Upload Photo</span>
+          </div>
+          <input type="file" id="photoInput" accept="image/*" style="display:none"/>
+        </div>
+
+        <!-- Basic Info -->
+        <div class="form-grid">
+          <div class="form-group full">
+            <label for="fieldName">Full Name <span class="required">*</span></label>
+            <input type="text" id="fieldName" placeholder="e.g. Jane Elizabeth Smith" />
+          </div>
+          <div class="form-group">
+            <label for="fieldBirth">Birth Date</label>
+            <input type="text" id="fieldBirth" placeholder="e.g. 14 Mar 1952" />
+          </div>
+          <div class="form-group">
+            <label for="fieldDeath">Death Date</label>
+            <input type="text" id="fieldDeath" placeholder="Leave blank if living" />
+          </div>
+          <div class="form-group">
+            <label for="fieldGender">Gender</label>
+            <select id="fieldGender">
+              <option value="">— select —</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="nonbinary">Non-binary</option>
+              <option value="other">Other / Prefer not to say</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="fieldNickname">Nickname / Maiden Name</label>
+            <input type="text" id="fieldNickname" placeholder="Optional" />
+          </div>
+          <div class="form-group full">
+            <label for="fieldBirthplace">Birthplace</label>
+            <input type="text" id="fieldBirthplace" placeholder="e.g. Dublin, Ireland" />
+          </div>
+          <div class="form-group full">
+            <label for="fieldBio">Bio / Notes</label>
+            <textarea id="fieldBio" rows="3" placeholder="Any additional information…"></textarea>
+          </div>
+        </div>
+
+        <hr class="form-divider" />
+        <h4 class="rel-heading">Relationships</h4>
+
+        <div class="form-group full">
+          <label for="fieldParents">Parents</label>
+          <div class="rel-select-wrap">
+            <select id="fieldParents" multiple size="4"></select>
+            <span class="rel-hint">Hold Ctrl/Cmd to select multiple</span>
+          </div>
+        </div>
+
+        <div class="form-group full">
+          <label for="fieldSpouses">Spouse / Partner</label>
+          <div class="rel-select-wrap">
+            <select id="fieldSpouses" multiple size="3"></select>
+            <span class="rel-hint">Hold Ctrl/Cmd to select multiple</span>
+          </div>
+        </div>
+
+        <div class="form-group full">
+          <label for="fieldChildren">Children</label>
+          <div class="rel-select-wrap">
+            <select id="fieldChildren" multiple size="4"></select>
+            <span class="rel-hint">Hold Ctrl/Cmd to select multiple</span>
+          </div>
+        </div>
+
+      </div><!-- /modal-body -->
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="deletePersonBtn" style="display:none">🗑 Delete</button>
+        <div class="modal-footer-right">
+          <button class="btn btn-secondary" id="cancelModalBtn">Cancel</button>
+          <button class="btn btn-primary" id="savePersonBtn">Save Person</button>
+        </div>
+      </div>
+    </div><!-- /modal -->
+  </div>
+
+  <!-- ===== DELETE CONFIRM MODAL ===== -->
+  <div class="modal-overlay hidden" id="deleteModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>Confirm Delete</h3>
+        <button class="modal-close" id="deleteModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete <strong id="deletePersonName"></strong>?<br/>This will also remove all their relationship links.</p>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-right">
+          <button class="btn btn-secondary" id="cancelDeleteBtn">Cancel</button>
+          <button class="btn btn-danger" id="confirmDeleteBtn">Yes, Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PERSON DETAIL PANEL ===== -->
+  <div class="detail-panel hidden" id="detailPanel">
+    <button class="detail-close" id="detailClose" title="Close">✕</button>
+    <div class="detail-photo-wrap">
+      <img id="detailPhoto" src="" alt="" />
+      <div class="detail-avatar" id="detailAvatar"></div>
+    </div>
+    <h3 id="detailName"></h3>
+    <p id="detailNickname" class="detail-nickname"></p>
+    <p id="detailDates" class="detail-dates"></p>
+    <p id="detailBirthplace" class="detail-sub"></p>
+    <p id="detailBio" class="detail-bio"></p>
+    <div class="detail-rels" id="detailRels"></div>
+    <button class="btn btn-primary btn-full" id="detailEditBtn">✏ Edit This Person</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
