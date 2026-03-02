@@ -695,6 +695,9 @@ function layoutTree() {
   if (people.length === 0) return new Map();
 
   const genMap  = new Map();
+  const isolatedIds = new Set();
+
+  // ── Step 1: BFS from roots (people with no parents) ──────
   const roots   = people.filter(p => !p.parents || p.parents.length === 0);
   const queue   = roots.map(r => ({ id: r.id, gen: 0 }));
   const visited = new Set();
@@ -712,15 +715,76 @@ function layoutTree() {
     if (p && p.spouses)  p.spouses.forEach(sid => { if (!visited.has(sid)) queue.push({ id: sid, gen }); });
   }
 
-  people.forEach(p => { if (!genMap.has(p.id)) genMap.set(p.id, 0); });
+  // ── Step 2: Infer generation for unvisited people ────────
+  // Repeatedly scan reverse-relationships until stable
+  let changed = true;
+  while (changed) {
+    changed = false;
+    people.forEach(p => {
+      if (genMap.has(p.id)) return;
+      let inferredGen = null;
 
+      // Check p's own relationship arrays for already-placed anchors
+      (p.parents || []).forEach(pid => {
+        if (genMap.has(pid)) {
+          const cand = genMap.get(pid) + 1;
+          if (inferredGen === null || cand > inferredGen) inferredGen = cand;
+        }
+      });
+      (p.children || []).forEach(cid => {
+        if (genMap.has(cid)) {
+          const cand = genMap.get(cid) - 1;
+          if (inferredGen === null || cand < inferredGen) inferredGen = cand;
+        }
+      });
+      (p.spouses || []).forEach(sid => {
+        if (genMap.has(sid) && inferredGen === null) inferredGen = genMap.get(sid);
+      });
+
+      // Also scan reverse: other people who reference p
+      if (inferredGen === null) {
+        people.forEach(other => {
+          if (!genMap.has(other.id)) return;
+          const og = genMap.get(other.id);
+          if ((other.parents   || []).includes(p.id) && inferredGen === null) inferredGen = og - 1;
+          if ((other.children  || []).includes(p.id) && inferredGen === null) inferredGen = og + 1;
+          if ((other.spouses   || []).includes(p.id) && inferredGen === null) inferredGen = og;
+        });
+      }
+
+      if (inferredGen !== null) {
+        genMap.set(p.id, inferredGen);
+        changed = true;
+      }
+    });
+  }
+
+  // ── Step 3: Mark truly isolated nodes (no relationships) ─
+  people.forEach(p => {
+    if (!genMap.has(p.id)) {
+      const hasAnyRel = (p.parents  || []).length > 0 ||
+                        (p.spouses  || []).length > 0 ||
+                        (p.children || []).length > 0;
+      genMap.set(p.id, 0);
+      if (!hasAnyRel) isolatedIds.add(p.id);
+    }
+  });
+
+  // ── Step 4: Normalize generations so minimum = 0 ─────────
+  const minGen = Math.min(...genMap.values());
+  if (minGen !== 0) {
+    genMap.forEach((gen, id) => genMap.set(id, gen - minGen));
+  }
+
+  // ── Step 5: Group by generation ──────────────────────────
   const byGen = new Map();
   genMap.forEach((gen, id) => {
     if (!byGen.has(gen)) byGen.set(gen, []);
     byGen.get(gen).push(id);
   });
 
-  byGen.forEach((ids) => {
+  // ── Step 6: Sort each generation, keeping linked nodes adjacent ──
+  byGen.forEach((ids, gen) => {
     const ordered = [];
     const placed  = new Set();
     ids.forEach(id => {
@@ -728,50 +792,33 @@ function layoutTree() {
       placed.add(id);
       ordered.push(id);
       const p = getPerson(id);
+      // Keep spouses side by side
       if (p && p.spouses) {
         p.spouses.forEach(sid => {
           if (ids.includes(sid) && !placed.has(sid)) { placed.add(sid); ordered.push(sid); }
         });
       }
     });
-    byGen.set(ids === byGen.get(genMap.get(ids[0])) ? genMap.get(ids[0]) : [...byGen.entries()].find(([,v]) => v === ids)?.[0], ordered);
+    byGen.set(gen, ordered);
   });
 
-  // Rebuild byGen cleanly
-  const byGen2 = new Map();
-  genMap.forEach((gen, id) => {
-    if (!byGen2.has(gen)) byGen2.set(gen, []);
-    byGen2.get(gen).push(id);
-  });
-  // Sort each generation keeping spouses together
-  byGen2.forEach((ids, gen) => {
-    const ordered = [];
-    const placed  = new Set();
-    ids.forEach(id => {
-      if (placed.has(id)) return;
-      placed.add(id);
-      ordered.push(id);
-      const p = getPerson(id);
-      if (p && p.spouses) {
-        p.spouses.forEach(sid => {
-          if (ids.includes(sid) && !placed.has(sid)) { placed.add(sid); ordered.push(sid); }
-        });
-      }
-    });
-    byGen2.set(gen, ordered);
-  });
-
+  // ── Step 7: Calculate pixel positions ────────────────────
   const positions = new Map();
   const PADDING_TOP  = 60;
   const PADDING_LEFT = 60;
   let maxCols = 0;
-  byGen2.forEach(ids => { if (ids.length > maxCols) maxCols = ids.length; });
+  byGen.forEach(ids => { if (ids.length > maxCols) maxCols = ids.length; });
 
-  byGen2.forEach((ids, gen) => {
+  byGen.forEach((ids, gen) => {
     const totalW = ids.length * (NODE_W + H_GAP) - H_GAP;
     const startX = PADDING_LEFT + Math.max(0, (maxCols * (NODE_W + H_GAP) - totalW) / 2);
     ids.forEach((id, col) => {
-      positions.set(id, { gen, col, x: startX + col * (NODE_W + H_GAP), y: PADDING_TOP + gen * (NODE_H + V_GAP) });
+      positions.set(id, {
+        gen, col,
+        x: startX + col * (NODE_W + H_GAP),
+        y: PADDING_TOP + gen * (NODE_H + V_GAP),
+        isolated: isolatedIds.has(id)
+      });
     });
   });
 
@@ -795,7 +842,7 @@ function renderTree() {
     const p = getPerson(id);
     if (!p) return;
     const node = document.createElement('div');
-    node.className = `person-node${p.gender ? ' ' + p.gender : ''}`;
+    node.className = `person-node${p.gender ? ' ' + p.gender : ''}${pos.isolated ? ' isolated' : ''}`;
     node.style.left = pos.x + 'px';
     node.style.top  = pos.y + 'px';
     node.dataset.id = id;
