@@ -845,6 +845,33 @@ function layoutTree() {
     });
   }
 
+  // ── Step 2.5: Adjust misplaced root nodes ───────────────
+  // Roots (no parents in system) are placed at gen 0 by BFS before their
+  // children's true generation is known. If a root's children end up at
+  // gen N > 1, the root should be at gen N-1, not gen 0.
+  // Example: Lenox has no parents, but his daughter Sasha is gen 2 because
+  // Sasha has another parent descended from Oscar/Evangeline (gen 0→1→Sasha).
+  // So Lenox should be gen 1, not gen 0.
+  let adjustMade = true;
+  while (adjustMade) {
+    adjustMade = false;
+    people.forEach(p => {
+      // Only adjust people who have no parents recorded (true roots)
+      if ((p.parents || []).length > 0) return;
+      if (!genMap.has(p.id)) return;
+      const childGens = (p.children || [])
+        .map(cid => genMap.get(cid))
+        .filter(g => g !== undefined);
+      if (childGens.length === 0) return;
+      const expectedGen = Math.min(...childGens) - 1;
+      // Only move DOWN (increase gen number) — never up
+      if (expectedGen > genMap.get(p.id)) {
+        genMap.set(p.id, expectedGen);
+        adjustMade = true;
+      }
+    });
+  }
+
   // ── Step 3: Mark truly isolated nodes (no relationships) ─
   people.forEach(p => {
     if (!genMap.has(p.id)) {
