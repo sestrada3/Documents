@@ -949,7 +949,7 @@ function layoutTree() {
     });
   }
 
-  // Spouse adjacency pass — after barycenter, keep couples side-by-side
+  // Adjacency pass — keep spouses AND co-parents (share a child) side-by-side
   byGen.forEach((ids, gen) => {
     const ordered = [];
     const placed  = new Set();
@@ -958,9 +958,25 @@ function layoutTree() {
       placed.add(id);
       ordered.push(id);
       const p = getPerson(id);
+      // 1. Keep spouses adjacent
       if (p && p.spouses) {
         p.spouses.forEach(sid => {
           if (ids.includes(sid) && !placed.has(sid)) { placed.add(sid); ordered.push(sid); }
+        });
+      }
+      // 2. Keep co-parents adjacent — two people who share a child but aren't spouses
+      //    e.g. Lenox and Sasha are both parents of Mallory → place them next to each other
+      if (p && p.children) {
+        p.children.forEach(cid => {
+          const child = getPerson(cid);
+          if (!child) return;
+          (child.parents || []).forEach(coParentId => {
+            if (coParentId === id) return; // skip self
+            if (ids.includes(coParentId) && !placed.has(coParentId)) {
+              placed.add(coParentId);
+              ordered.push(coParentId);
+            }
+          });
         });
       }
     });
