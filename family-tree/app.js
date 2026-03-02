@@ -1046,40 +1046,66 @@ function drawLines(positions) {
   svgLines.innerHTML = '';
   const drawnSpouse = new Set();
 
+  // Helper: create an SVG line element
+  const makeLine = (x1, y1, x2, y2, stroke, width) => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    el.setAttribute('x1', x1); el.setAttribute('y1', y1);
+    el.setAttribute('x2', x2); el.setAttribute('y2', y2);
+    el.setAttribute('stroke', stroke);
+    el.setAttribute('stroke-width', width);
+    return el;
+  };
+
   people.forEach(p => {
     const pPos = positions.get(p.id);
     if (!pPos) return;
 
-    (p.children || []).forEach(cid => {
-      const cPos = positions.get(cid);
-      if (!cPos) return;
-      const x1 = pPos.x + NODE_W / 2, y1 = pPos.y + NODE_H;
-      const x2 = cPos.x + NODE_W / 2, y2 = cPos.y;
-      const cy = (y1 + y2) / 2;
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', `M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', '#94a3b8');
-      path.setAttribute('stroke-width', '2');
-      svgLines.appendChild(path);
-    });
+    // ── Parent → children: orthogonal tree connectors ────────
+    // Style:   parent
+    //            |           ← vertical stem to midpoint
+    //         ───┼───        ← horizontal bar spanning children
+    //            |   |       ← vertical drops to each child
+    //          child1 child2
+    const validChildren = (p.children || [])
+      .map(cid => ({ id: cid, pos: positions.get(cid) }))
+      .filter(c => c.pos);
 
+    if (validChildren.length > 0) {
+      const px   = pPos.x + NODE_W / 2;
+      const py   = pPos.y + NODE_H;
+      const cy0  = validChildren[0].pos.y;        // top of child row (all same gen = same Y)
+      const midY = Math.round((py + cy0) / 2);    // halfway between parent bottom and child top
+
+      // 1. Vertical stem: parent bottom → midY
+      svgLines.appendChild(makeLine(px, py, px, midY, '#94a3b8', 2));
+
+      // 2. Horizontal bar at midY spanning from leftmost to rightmost point
+      const childXs = validChildren.map(c => c.pos.x + NODE_W / 2);
+      const minX    = Math.min(px, ...childXs);
+      const maxX    = Math.max(px, ...childXs);
+      if (minX < maxX) {
+        svgLines.appendChild(makeLine(minX, midY, maxX, midY, '#94a3b8', 2));
+      }
+
+      // 3. Vertical drops: midY → each child's top
+      validChildren.forEach(c => {
+        const cx = c.pos.x + NODE_W / 2;
+        svgLines.appendChild(makeLine(cx, midY, cx, c.pos.y, '#94a3b8', 2));
+      });
+    }
+
+    // ── Spouse / partner connector ───────────────────────────
     (p.spouses || []).forEach(sid => {
       const key = [p.id, sid].sort().join('-');
       if (drawnSpouse.has(key)) return;
       drawnSpouse.add(key);
       const sPos = positions.get(sid);
       if (!sPos) return;
-      const x1 = pPos.x + NODE_W, y1 = pPos.y + NODE_H / 2;
-      const x2 = sPos.x,          y2 = sPos.y + NODE_H / 2;
-      const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
+      const x1   = pPos.x + NODE_W, y1 = pPos.y + NODE_H / 2;
+      const x2   = sPos.x,          y2 = sPos.y + NODE_H / 2;
+      const midX = (x1 + x2) / 2,   midY = (y1 + y2) / 2;
       [-3, 3].forEach(offset => {
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', x1); line.setAttribute('y1', y1 + offset);
-        line.setAttribute('x2', x2); line.setAttribute('y2', y2 + offset);
-        line.setAttribute('stroke', '#f472b6');
-        line.setAttribute('stroke-width', '1.5');
-        svgLines.appendChild(line);
+        svgLines.appendChild(makeLine(x1, y1 + offset, x2, y2 + offset, '#f472b6', 1.5));
       });
       const heart = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       heart.setAttribute('x', midX); heart.setAttribute('y', midY + 5);
