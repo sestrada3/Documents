@@ -595,6 +595,14 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
   letter-spacing: .04em;
 }
 .required { color: var(--danger); }
+.label-note {
+  font-size: .72rem;
+  font-weight: 400;
+  text-transform: none;
+  color: var(--text-muted);
+  letter-spacing: 0;
+  font-style: italic;
+}
 
 .form-group input,
 .form-group select,
@@ -627,6 +635,87 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
 }
 .rel-select-wrap { display: flex; flex-direction: column; gap: 4px; }
 .rel-hint { font-size: .73rem; color: var(--text-muted); }
+
+/* ---------- Date Picker Row ---------- */
+.date-picker-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.date-select {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 8px;
+  border: 1.5px solid var(--border2);
+  border-radius: 8px;
+  font-size: .85rem;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--transition);
+  font-family: var(--font);
+  appearance: auto;
+}
+.date-select:focus { border-color: var(--primary); }
+.date-year {
+  width: 90px;
+  flex-shrink: 0;
+  padding: 9px 10px;
+  border: 1.5px solid var(--border2);
+  border-radius: 8px;
+  font-size: .85rem;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  transition: border-color var(--transition);
+  font-family: var(--font);
+  /* Hide spinners */
+  -moz-appearance: textfield;
+}
+.date-year::-webkit-outer-spin-button,
+.date-year::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.date-year:focus { border-color: var(--primary); }
+
+/* ---------- Location Autocomplete ---------- */
+.location-wrap {
+  position: relative;
+  width: 100%;
+}
+.location-wrap input {
+  width: 100%;
+}
+.location-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1.5px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  z-index: 9999;
+  list-style: none;
+  padding: 4px 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: none;
+}
+.location-option {
+  padding: 9px 14px;
+  font-size: .83rem;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background var(--transition);
+  border-bottom: 1px solid var(--border);
+}
+.location-option:last-child { border-bottom: none; }
+.location-option:hover,
+.location-option.active {
+  background: var(--primary-lt);
+  color: var(--primary-dk);
+}
 
 /* ---------- Detail Panel ---------- */
 .detail-panel {

@@ -12,8 +12,13 @@ let pendingDeleteId = null;
 let transform = { x: 0, y: 0, scale: 1 };
 const NODE_W  = 160;
 const NODE_H  = 200;
-const H_GAP   = 40;   // horizontal gap between nodes
-const V_GAP   = 90;   // vertical gap between generations
+const H_GAP   = 40;
+const V_GAP   = 90;
+
+// ── Month names ──────────────────────────────────────────────
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS_FULL  = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
 
 // ── DOM References ──────────────────────────────────────────
 const treeCanvas   = document.getElementById('treeCanvas');
@@ -26,26 +31,42 @@ const peopleEmpty  = document.getElementById('peopleEmpty');
 const glossaryBody = document.getElementById('glossaryBody');
 
 // Modal
-const personModal   = document.getElementById('personModal');
-const modalTitle    = document.getElementById('modalTitle');
-const deleteModal   = document.getElementById('deleteModal');
+const personModal      = document.getElementById('personModal');
+const modalTitle       = document.getElementById('modalTitle');
+const deleteModal      = document.getElementById('deleteModal');
 const deletePersonName = document.getElementById('deletePersonName');
 
-// Form fields
-const photoUploadArea = document.getElementById('photoUploadArea');
-const photoPreview    = document.getElementById('photoPreview');
-const photoPlaceholder = document.getElementById('photoPlaceholder');
-const photoInput      = document.getElementById('photoInput');
-const fieldName       = document.getElementById('fieldName');
-const fieldBirth      = document.getElementById('fieldBirth');
-const fieldDeath      = document.getElementById('fieldDeath');
+// Form — Name fields
+const fieldFirstName  = document.getElementById('fieldFirstName');
+const fieldMiddleName = document.getElementById('fieldMiddleName');
+const fieldMaidenName = document.getElementById('fieldMaidenName');
+const fieldLastName   = document.getElementById('fieldLastName');
+const fieldOtherNames = document.getElementById('fieldOtherNames');
+
+// Form — Date fields
+const fieldBirthDay   = document.getElementById('fieldBirthDay');
+const fieldBirthMonth = document.getElementById('fieldBirthMonth');
+const fieldBirthYear  = document.getElementById('fieldBirthYear');
+const fieldDeathDay   = document.getElementById('fieldDeathDay');
+const fieldDeathMonth = document.getElementById('fieldDeathMonth');
+const fieldDeathYear  = document.getElementById('fieldDeathYear');
+
+// Form — Other
 const fieldGender     = document.getElementById('fieldGender');
-const fieldNickname   = document.getElementById('fieldNickname');
 const fieldBirthplace = document.getElementById('fieldBirthplace');
 const fieldBio        = document.getElementById('fieldBio');
 const fieldParents    = document.getElementById('fieldParents');
 const fieldSpouses    = document.getElementById('fieldSpouses');
 const fieldChildren   = document.getElementById('fieldChildren');
+
+// Photo
+const photoUploadArea  = document.getElementById('photoUploadArea');
+const photoPreview     = document.getElementById('photoPreview');
+const photoPlaceholder = document.getElementById('photoPlaceholder');
+const photoInput       = document.getElementById('photoInput');
+
+// Location autocomplete
+const birthplaceDropdown = document.getElementById('birthplaceDropdown');
 
 // Detail panel
 const detailPanel     = document.getElementById('detailPanel');
@@ -58,7 +79,102 @@ const detailBirthplace = document.getElementById('detailBirthplace');
 const detailBio       = document.getElementById('detailBio');
 const detailRels      = document.getElementById('detailRels');
 
-let currentPhotoData = null; // base64 string
+let currentPhotoData = null;
+
+// ── Day dropdown population ──────────────────────────────────
+function populateDaySelect(select) {
+  // Keep the blank "Day" option
+  while (select.options.length > 1) select.remove(1);
+  for (let d = 1; d <= 31; d++) {
+    const o = document.createElement('option');
+    o.value = String(d).padStart(2, '0');
+    o.textContent = d;
+    select.appendChild(o);
+  }
+}
+
+// ── Date helpers ─────────────────────────────────────────────
+/**
+ * Build a date string like "14 Mar 1952" from parts.
+ * Any component can be blank/missing.
+ */
+function buildDateString(day, month, year) {
+  const parts = [];
+  if (day)   parts.push(parseInt(day, 10));          // "14"
+  if (month) parts.push(MONTHS_SHORT[parseInt(month,10) - 1]); // "Mar"
+  if (year)  parts.push(year);                        // "1952"
+  return parts.join(' ');
+}
+
+/**
+ * Parse a stored date string back to { day, month, year } components.
+ * Handles formats like "14 Mar 1952", "Mar 1952", "1952", "14 Mar", etc.
+ */
+function parseDateString(str) {
+  if (!str) return { day: '', month: '', year: '' };
+  const tokens = str.trim().split(/\s+/);
+  let day = '', month = '', year = '';
+
+  tokens.forEach(tok => {
+    const asNum = parseInt(tok, 10);
+    if (!isNaN(asNum)) {
+      if (asNum > 31) {
+        year = String(asNum);
+      } else if (asNum >= 1 && asNum <= 31 && !day) {
+        day = String(asNum).padStart(2, '0');
+      }
+    } else {
+      // Try as month name
+      const idx = MONTHS_SHORT.findIndex(m => m.toLowerCase() === tok.toLowerCase());
+      if (idx !== -1) month = String(idx + 1).padStart(2, '0');
+      else {
+        const idx2 = MONTHS_FULL.findIndex(m => m.toLowerCase() === tok.toLowerCase());
+        if (idx2 !== -1) month = String(idx2 + 1).padStart(2, '0');
+      }
+    }
+  });
+
+  return { day, month, year };
+}
+
+/** Set day/month/year dropdowns from a stored date string */
+function setDateFields(daySel, monthSel, yearInput, dateStr) {
+  const { day, month, year } = parseDateString(dateStr);
+  daySel.value   = day;
+  monthSel.value = month;
+  yearInput.value = year;
+}
+
+/** Clear day/month/year fields */
+function clearDateFields(daySel, monthSel, yearInput) {
+  daySel.value   = '';
+  monthSel.value = '';
+  yearInput.value = '';
+}
+
+// ── Name helpers ─────────────────────────────────────────────
+/**
+ * Build a display name from name parts.
+ * Format: "FirstName MiddleName [née MaidenName] LastName"
+ * Other names shown separately in the detail panel.
+ */
+function buildDisplayName(p) {
+  const parts = [];
+  if (p.firstName)  parts.push(p.firstName);
+  if (p.middleName) parts.push(p.middleName);
+  if (p.maidenName) parts.push(`[née ${p.maidenName}]`);
+  if (p.lastName)   parts.push(p.lastName);
+  return parts.join(' ') || p.name || '(No Name)';
+}
+
+/** Build a short display name for tree nodes / list selects */
+function buildShortName(p) {
+  const parts = [];
+  if (p.firstName) parts.push(p.firstName);
+  if (p.lastName)  parts.push(p.lastName);
+  if (parts.length === 0 && p.name) return p.name;
+  return parts.join(' ') || '(No Name)';
+}
 
 // ── Utilities ────────────────────────────────────────────────
 function uid() { return nextId++; }
@@ -94,20 +210,30 @@ function openAddModal() {
   editingId = null;
   currentPhotoData = null;
   modalTitle.textContent = 'Add Person';
-  fieldName.value = '';
-  fieldBirth.value = '';
-  fieldDeath.value = '';
-  fieldGender.value = '';
-  fieldNickname.value = '';
+
+  // Clear name fields
+  fieldFirstName.value  = '';
+  fieldMiddleName.value = '';
+  fieldMaidenName.value = '';
+  fieldLastName.value   = '';
+  fieldOtherNames.value = '';
+
+  // Clear date fields
+  clearDateFields(fieldBirthDay, fieldBirthMonth, fieldBirthYear);
+  clearDateFields(fieldDeathDay, fieldDeathMonth, fieldDeathYear);
+
+  // Clear other
+  fieldGender.value     = '';
   fieldBirthplace.value = '';
-  fieldBio.value = '';
+  fieldBio.value        = '';
+
   photoPreview.src = '';
   photoPreview.style.display = 'none';
   photoPlaceholder.style.display = 'flex';
   document.getElementById('deletePersonBtn').style.display = 'none';
   populateRelSelects(null);
   personModal.classList.remove('hidden');
-  fieldName.focus();
+  fieldFirstName.focus();
 }
 
 function openEditModal(id) {
@@ -116,13 +242,22 @@ function openEditModal(id) {
   editingId = id;
   currentPhotoData = p.photo || null;
   modalTitle.textContent = 'Edit Person';
-  fieldName.value = p.name || '';
-  fieldBirth.value = p.birth || '';
-  fieldDeath.value = p.death || '';
-  fieldGender.value = p.gender || '';
-  fieldNickname.value = p.nickname || '';
+
+  // Populate name fields
+  fieldFirstName.value  = p.firstName  || '';
+  fieldMiddleName.value = p.middleName || '';
+  fieldMaidenName.value = p.maidenName || '';
+  fieldLastName.value   = p.lastName   || '';
+  fieldOtherNames.value = p.otherNames || '';
+
+  // Populate date fields
+  setDateFields(fieldBirthDay, fieldBirthMonth, fieldBirthYear, p.birth || '');
+  setDateFields(fieldDeathDay, fieldDeathMonth, fieldDeathYear, p.death || '');
+
+  fieldGender.value     = p.gender    || '';
   fieldBirthplace.value = p.birthplace || '';
-  fieldBio.value = p.bio || '';
+  fieldBio.value        = p.bio       || '';
+
   if (p.photo) {
     photoPreview.src = p.photo;
     photoPreview.style.display = 'block';
@@ -134,7 +269,6 @@ function openEditModal(id) {
   }
   document.getElementById('deletePersonBtn').style.display = 'inline-flex';
   populateRelSelects(id);
-  // Pre-select existing relationships
   Array.from(fieldParents.options).forEach(o => {
     o.selected = (p.parents || []).includes(parseInt(o.value));
   });
@@ -145,13 +279,15 @@ function openEditModal(id) {
     o.selected = (p.children || []).includes(parseInt(o.value));
   });
   personModal.classList.remove('hidden');
-  fieldName.focus();
+  fieldFirstName.focus();
 }
 
 function closeModal() {
   personModal.classList.add('hidden');
   editingId = null;
   currentPhotoData = null;
+  birthplaceDropdown.innerHTML = '';
+  birthplaceDropdown.style.display = 'none';
 }
 
 function populateRelSelects(excludeId) {
@@ -161,30 +297,45 @@ function populateRelSelects(excludeId) {
     others.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.id;
-      opt.textContent = p.name + (p.birth ? ` (b. ${p.birth})` : '');
+      const displayName = buildShortName(p);
+      opt.textContent = displayName + (p.birth ? ` (b. ${p.birth})` : '');
       sel.appendChild(opt);
     });
   });
 }
 
 function savePerson() {
-  const name = fieldName.value.trim();
-  if (!name) { fieldName.focus(); fieldName.style.borderColor = '#ef4444'; return; }
-  fieldName.style.borderColor = '';
+  const firstName = fieldFirstName.value.trim();
+  if (!firstName) {
+    fieldFirstName.focus();
+    fieldFirstName.style.borderColor = '#ef4444';
+    return;
+  }
+  fieldFirstName.style.borderColor = '';
+
+  const middleName = fieldMiddleName.value.trim();
+  const maidenName = fieldMaidenName.value.trim();
+  const lastName   = fieldLastName.value.trim();
+  const otherNames = fieldOtherNames.value.trim();
+
+  // Build date strings from dropdowns
+  const birth = buildDateString(fieldBirthDay.value, fieldBirthMonth.value, fieldBirthYear.value);
+  const death = buildDateString(fieldDeathDay.value, fieldDeathMonth.value, fieldDeathYear.value);
+
   const selectedIds = sel => Array.from(sel.selectedOptions).map(o => parseInt(o.value));
   const parents  = selectedIds(fieldParents);
   const spouses  = selectedIds(fieldSpouses);
   const children = selectedIds(fieldChildren);
 
   if (editingId === null) {
-    // New person
     const id = uid();
     const person = {
-      id, name,
-      birth: fieldBirth.value.trim(),
-      death: fieldDeath.value.trim(),
+      id,
+      firstName, middleName, maidenName, lastName, otherNames,
+      // Computed display name stored for backwards compat / export
+      name: buildDisplayName({ firstName, middleName, maidenName, lastName }),
+      birth, death,
       gender: fieldGender.value,
-      nickname: fieldNickname.value.trim(),
       birthplace: fieldBirthplace.value.trim(),
       bio: fieldBio.value.trim(),
       photo: currentPhotoData,
@@ -193,13 +344,16 @@ function savePerson() {
     people.push(person);
     syncRelationships(id, parents, spouses, children);
   } else {
-    // Edit existing
     const p = getPerson(editingId);
-    p.name = name;
-    p.birth = fieldBirth.value.trim();
-    p.death = fieldDeath.value.trim();
+    p.firstName  = firstName;
+    p.middleName = middleName;
+    p.maidenName = maidenName;
+    p.lastName   = lastName;
+    p.otherNames = otherNames;
+    p.name = buildDisplayName({ firstName, middleName, maidenName, lastName });
+    p.birth = birth;
+    p.death = death;
     p.gender = fieldGender.value;
-    p.nickname = fieldNickname.value.trim();
     p.birthplace = fieldBirthplace.value.trim();
     p.bio = fieldBio.value.trim();
     p.photo = currentPhotoData;
@@ -218,19 +372,16 @@ function savePerson() {
 function syncRelationships(id, parents, spouses, children) {
   people.forEach(p => {
     if (p.id === id) return;
-    // Parents of id → id should appear in their children
     if (parents.includes(p.id)) {
       if (!(p.children || []).includes(id)) p.children = [...(p.children||[]), id];
     } else {
       p.children = (p.children||[]).filter(c => c !== id);
     }
-    // Spouses of id → id should appear in their spouses
     if (spouses.includes(p.id)) {
       if (!(p.spouses || []).includes(id)) p.spouses = [...(p.spouses||[]), id];
     } else {
       p.spouses = (p.spouses||[]).filter(s => s !== id);
     }
-    // Children of id → id should appear in their parents
     if (children.includes(p.id)) {
       if (!(p.parents || []).includes(id)) p.parents = [...(p.parents||[]), id];
     } else {
@@ -243,7 +394,7 @@ function syncRelationships(id, parents, spouses, children) {
 function promptDelete(id) {
   pendingDeleteId = id;
   const p = getPerson(id);
-  deletePersonName.textContent = p ? p.name : 'this person';
+  deletePersonName.textContent = p ? buildDisplayName(p) : 'this person';
   closeModal();
   deleteModal.classList.remove('hidden');
 }
@@ -251,7 +402,6 @@ function promptDelete(id) {
 function confirmDelete() {
   if (pendingDeleteId === null) return;
   const id = pendingDeleteId;
-  // Remove all references to this person
   people.forEach(p => {
     p.parents   = (p.parents  ||[]).filter(x => x !== id);
     p.spouses   = (p.spouses  ||[]).filter(x => x !== id);
@@ -270,7 +420,6 @@ function showDetail(id) {
   const p = getPerson(id);
   if (!p) return;
 
-  // Photo or avatar
   if (p.photo) {
     detailPhoto.src = p.photo;
     detailPhoto.style.display = 'block';
@@ -281,14 +430,18 @@ function showDetail(id) {
     detailAvatar.style.display = 'flex';
   }
 
-  detailName.textContent = p.name;
-  detailNickname.textContent = p.nickname ? `"${p.nickname}"` : '';
+  detailName.textContent = buildDisplayName(p);
+
+  // Other names / nicknames
+  const nickStr = p.otherNames ? `also known as: ${p.otherNames}` : (p.nickname ? `"${p.nickname}"` : '');
+  detailNickname.textContent = nickStr;
+  detailNickname.style.display = nickStr ? '' : 'none';
+
   detailDates.textContent = formatDates(p);
   detailBirthplace.textContent = p.birthplace ? `📍 ${p.birthplace}` : '';
   detailBio.textContent = p.bio || '';
   detailBio.style.display = p.bio ? 'block' : 'none';
 
-  // Relationships
   detailRels.innerHTML = '';
   const addGroup = (label, ids) => {
     if (!ids || ids.length === 0) return;
@@ -301,7 +454,7 @@ function showDetail(id) {
       if (!rel) return;
       const chip = document.createElement('span');
       chip.className = 'rel-chip';
-      chip.textContent = genderEmoji(rel.gender) + ' ' + rel.name;
+      chip.textContent = genderEmoji(rel.gender) + ' ' + buildShortName(rel);
       chip.addEventListener('click', () => showDetail(rid));
       chips.appendChild(chip);
     });
@@ -311,7 +464,6 @@ function showDetail(id) {
   addGroup('Spouse / Partner', p.spouses);
   addGroup('Children', p.children);
 
-  // Siblings (same parents)
   if (p.parents && p.parents.length > 0) {
     const siblingIds = new Set();
     p.parents.forEach(pid => {
@@ -321,9 +473,7 @@ function showDetail(id) {
     addGroup('Siblings', [...siblingIds]);
   }
 
-  // Wire edit button
   document.getElementById('detailEditBtn').onclick = () => openEditModal(id);
-
   detailPanel.classList.remove('hidden');
 }
 
@@ -340,16 +490,19 @@ function renderPeopleGrid() {
   }
   peopleEmpty.classList.add('hidden');
 
-  const sorted = [...people].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...people].sort((a, b) => buildDisplayName(a).localeCompare(buildDisplayName(b)));
   sorted.forEach(p => {
+    const displayName = buildDisplayName(p);
+    const shortName   = buildShortName(p);
     const card = document.createElement('div');
     card.className = `people-card${p.gender ? ' ' + p.gender : ''}`;
     card.innerHTML = p.photo
-      ? `<img class="card-photo" src="${p.photo}" alt="${p.name}"/>`
+      ? `<img class="card-photo" src="${p.photo}" alt="${shortName}"/>`
       : `<div class="card-avatar">${genderEmoji(p.gender)}</div>`;
     const dates = formatDates(p);
+    const otherLabel = p.otherNames ? `<br/><span style="font-weight:400;font-style:italic;font-size:.73rem">${p.otherNames}</span>` : '';
     card.innerHTML += `
-      <div class="card-name">${p.name}${p.nickname ? `<br/><span style="font-weight:400;font-style:italic;font-size:.78rem">"${p.nickname}"</span>` : ''}</div>
+      <div class="card-name">${displayName}${otherLabel}</div>
       ${dates ? `<div class="card-dates">${dates}</div>` : ''}
       <div class="card-actions">
         <button class="btn btn-secondary btn-sm" data-view="${p.id}">View</button>
@@ -357,7 +510,6 @@ function renderPeopleGrid() {
       </div>`;
     card.querySelector('[data-view]').addEventListener('click', e => {
       e.stopPropagation();
-      // Switch to tree tab and show detail
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(s => s.classList.remove('active'));
       document.querySelector('[data-tab="tree"]').classList.add('active');
@@ -375,26 +527,17 @@ function renderPeopleGrid() {
 }
 
 // ── Tree Rendering ───────────────────────────────────────────
-
-/**
- * Assigns each person a { generation, col } position.
- * Generation 0 = earliest ancestors (top), increasing downward.
- * Returns a Map: id -> { gen, col, x, y }
- */
 function layoutTree() {
   if (people.length === 0) return new Map();
 
-  // Step 1: Assign generations via BFS from roots (people with no parents)
-  const genMap = new Map(); // id -> generation number
-  const roots = people.filter(p => !p.parents || p.parents.length === 0);
-
-  // BFS
-  const queue = roots.map(r => ({ id: r.id, gen: 0 }));
+  const genMap = new Map();
+  const roots  = people.filter(p => !p.parents || p.parents.length === 0);
+  const queue  = roots.map(r => ({ id: r.id, gen: 0 }));
   const visited = new Set();
+
   while (queue.length > 0) {
     const { id, gen } = queue.shift();
     if (visited.has(id)) {
-      // Update to max generation seen
       if (gen > genMap.get(id)) genMap.set(id, gen);
       continue;
     }
@@ -404,7 +547,6 @@ function layoutTree() {
     if (p && p.children) {
       p.children.forEach(cid => queue.push({ id: cid, gen: gen + 1 }));
     }
-    // Spouses share the same generation
     if (p && p.spouses) {
       p.spouses.forEach(sid => {
         if (!visited.has(sid)) queue.push({ id: sid, gen });
@@ -412,19 +554,15 @@ function layoutTree() {
     }
   }
 
-  // Anyone not reached (disconnected nodes) gets generation 0
   people.forEach(p => { if (!genMap.has(p.id)) genMap.set(p.id, 0); });
 
-  // Step 2: Group by generation and assign columns
   const byGen = new Map();
   genMap.forEach((gen, id) => {
     if (!byGen.has(gen)) byGen.set(gen, []);
     byGen.get(gen).push(id);
   });
 
-  // Sort each generation: try to keep spouses together, sort by name otherwise
   byGen.forEach((ids, gen) => {
-    // Group spouse pairs together
     const ordered = [];
     const placed  = new Set();
     ids.forEach(id => {
@@ -444,11 +582,9 @@ function layoutTree() {
     byGen.set(gen, ordered);
   });
 
-  // Step 3: Calculate pixel positions
   const positions = new Map();
   const PADDING_TOP  = 60;
   const PADDING_LEFT = 60;
-
   let maxCols = 0;
   byGen.forEach(ids => { if (ids.length > maxCols) maxCols = ids.length; });
 
@@ -478,11 +614,8 @@ function renderTree() {
   treeEmpty.classList.add('hidden');
 
   const positions = layoutTree();
-
-  // Draw connector lines first (SVG layer)
   drawLines(positions);
 
-  // Draw person nodes (HTML layer)
   positions.forEach((pos, id) => {
     const p = getPerson(id);
     if (!p) return;
@@ -494,13 +627,13 @@ function renderTree() {
     node.dataset.id = id;
 
     if (p.photo) {
-      node.innerHTML = `<img class="node-photo" src="${p.photo}" alt="${p.name}"/>`;
+      node.innerHTML = `<img class="node-photo" src="${p.photo}" alt="${buildShortName(p)}"/>`;
     } else {
       node.innerHTML = `<div class="node-avatar">${genderEmoji(p.gender)}</div>`;
     }
     const dates = formatDates(p);
     node.innerHTML += `
-      <div class="node-name">${p.name}</div>
+      <div class="node-name">${buildShortName(p)}</div>
       ${dates ? `<div class="node-dates">${dates}</div>` : ''}`;
 
     node.addEventListener('click', () => showDetail(id));
@@ -510,25 +643,20 @@ function renderTree() {
 
 function drawLines(positions) {
   svgLines.innerHTML = '';
-
   const drawnSpouse = new Set();
 
   people.forEach(p => {
     const pPos = positions.get(p.id);
     if (!pPos) return;
 
-    // Parent → Child lines
     (p.children || []).forEach(cid => {
       const cPos = positions.get(cid);
       if (!cPos) return;
-
-      // Mid-point of parent node bottom
       const x1 = pPos.x + NODE_W / 2;
       const y1 = pPos.y + NODE_H;
       const x2 = cPos.x + NODE_W / 2;
       const y2 = cPos.y;
       const cy = (y1 + y2) / 2;
-
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', `M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`);
       path.setAttribute('fill', 'none');
@@ -537,23 +665,18 @@ function drawLines(positions) {
       svgLines.appendChild(path);
     });
 
-    // Spouse lines (horizontal double bar ≈)
     (p.spouses || []).forEach(sid => {
       const key = [p.id, sid].sort().join('-');
       if (drawnSpouse.has(key)) return;
       drawnSpouse.add(key);
-
       const sPos = positions.get(sid);
       if (!sPos) return;
-
       const x1 = pPos.x + NODE_W;
       const y1 = pPos.y + NODE_H / 2;
       const x2 = sPos.x;
       const y2 = sPos.y + NODE_H / 2;
       const midX = (x1 + x2) / 2;
       const midY = (y1 + y2) / 2;
-
-      // Double line (two parallel lines with small gap)
       [-3, 3].forEach(offset => {
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('x1', x1);
@@ -564,8 +687,6 @@ function drawLines(positions) {
         line.setAttribute('stroke-width', '1.5');
         svgLines.appendChild(line);
       });
-
-      // Heart symbol in middle
       const heart = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       heart.setAttribute('x', midX);
       heart.setAttribute('y', midY + 5);
@@ -601,7 +722,6 @@ function initPanZoom() {
     treeWrapper.classList.remove('dragging');
   });
 
-  // Touch support
   treeWrapper.addEventListener('touchstart', e => {
     if (e.touches.length !== 1) return;
     if (e.target.closest('.person-node')) return;
@@ -617,7 +737,6 @@ function initPanZoom() {
   }, { passive: true });
   window.addEventListener('touchend', () => { isDragging = false; });
 
-  // Mouse wheel zoom
   treeWrapper.addEventListener('wheel', e => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
@@ -630,7 +749,6 @@ function initPanZoom() {
     applyTransform();
   }, { passive: false });
 
-  // Buttons
   document.getElementById('zoomIn').addEventListener('click', () => {
     transform.scale = Math.min(3, transform.scale * 1.2);
     applyTransform();
@@ -652,6 +770,100 @@ function applyTransform() {
   treeSvg.style.transformOrigin = '0 0';
 }
 
+// ── Location Autocomplete (Nominatim) ────────────────────────
+let locationDebounce = null;
+
+function initLocationAutocomplete() {
+  fieldBirthplace.addEventListener('input', () => {
+    clearTimeout(locationDebounce);
+    const q = fieldBirthplace.value.trim();
+    if (q.length < 3) {
+      birthplaceDropdown.innerHTML = '';
+      birthplaceDropdown.style.display = 'none';
+      return;
+    }
+    locationDebounce = setTimeout(() => fetchLocations(q, birthplaceDropdown, fieldBirthplace), 350);
+  });
+
+  fieldBirthplace.addEventListener('keydown', e => {
+    navigateDropdown(e, birthplaceDropdown, fieldBirthplace);
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.location-wrap')) {
+      birthplaceDropdown.innerHTML = '';
+      birthplaceDropdown.style.display = 'none';
+    }
+  });
+}
+
+function fetchLocations(query, dropdown, inputEl) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=6&addressdetails=0`;
+  fetch(url, {
+    headers: { 'Accept-Language': 'en', 'User-Agent': 'FamilyTreeGenerator/1.0' }
+  })
+  .then(r => r.json())
+  .then(results => {
+    dropdown.innerHTML = '';
+    if (!results || results.length === 0) {
+      dropdown.style.display = 'none';
+      return;
+    }
+    results.forEach((item, i) => {
+      const li = document.createElement('li');
+      li.className = 'location-option';
+      li.textContent = item.display_name;
+      li.dataset.idx = i;
+      li.addEventListener('mousedown', e => {
+        e.preventDefault(); // Don't blur input
+        inputEl.value = item.display_name;
+        dropdown.innerHTML = '';
+        dropdown.style.display = 'none';
+      });
+      dropdown.appendChild(li);
+    });
+    dropdown.style.display = 'block';
+  })
+  .catch(() => {
+    dropdown.innerHTML = '';
+    dropdown.style.display = 'none';
+  });
+}
+
+function navigateDropdown(e, dropdown, inputEl) {
+  const items = dropdown.querySelectorAll('.location-option');
+  if (!items.length) return;
+  const active = dropdown.querySelector('.location-option.active');
+  let idx = active ? parseInt(active.dataset.idx) : -1;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    idx = Math.min(idx + 1, items.length - 1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    idx = Math.max(idx - 1, 0);
+  } else if (e.key === 'Enter' && active) {
+    e.preventDefault();
+    inputEl.value = active.textContent;
+    dropdown.innerHTML = '';
+    dropdown.style.display = 'none';
+    return;
+  } else if (e.key === 'Escape') {
+    dropdown.innerHTML = '';
+    dropdown.style.display = 'none';
+    return;
+  } else {
+    return;
+  }
+
+  items.forEach(el => el.classList.remove('active'));
+  if (idx >= 0) {
+    items[idx].classList.add('active');
+    items[idx].scrollIntoView({ block: 'nearest' });
+  }
+}
+
 // ── Import / Export ──────────────────────────────────────────
 function exportData() {
   const data = JSON.stringify({ people, nextId }, null, 2);
@@ -670,11 +882,21 @@ function importData(file) {
     try {
       const data = JSON.parse(e.target.result);
       if (Array.isArray(data.people)) {
-        people = data.people;
+        people = data.people.map(p => {
+          // Back-compat: if imported person lacks name parts, split name field
+          if (!p.firstName && p.name) {
+            const parts = p.name.replace(/\[née [^\]]+\]/g,'').trim().split(/\s+/);
+            p.firstName  = parts[0] || '';
+            p.middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
+            p.lastName   = parts.length > 1 ? parts[parts.length - 1] : '';
+            p.maidenName = p.maidenName || p.nickname || '';
+            p.otherNames = p.otherNames || '';
+          }
+          return p;
+        });
         nextId = data.nextId || (Math.max(0, ...people.map(p => p.id)) + 1);
         renderTree();
         renderPeopleGrid();
-        // Switch to tree tab
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(s => s.classList.remove('active'));
         document.querySelector('[data-tab="tree"]').classList.add('active');
@@ -805,7 +1027,6 @@ function buildGlossary() {
     sec.innerHTML = `<div class="glossary-section-title">${section.title}</div>`;
 
     if (section.chart) {
-      // Cousin chart
       const wrap = document.createElement('div');
       wrap.className = 'cousin-chart-wrap';
       const headers = ['You / Common Ancestor', '1 generation below (Child)', '2 below (Grandchild)', '3 below (Gt-Grandchild)', '4 below'];
@@ -859,8 +1080,13 @@ function filterGlossary(q) {
 
 // ── Boot ─────────────────────────────────────────────────────
 function init() {
+  // Populate day dropdowns
+  populateDaySelect(fieldBirthDay);
+  populateDaySelect(fieldDeathDay);
+
   initTabs();
   initPanZoom();
+  initLocationAutocomplete();
   buildGlossary();
   renderTree();
   renderPeopleGrid();
@@ -868,12 +1094,10 @@ function init() {
 }
 
 function bindEvents() {
-  // Add person buttons
   document.getElementById('addPersonTreeBtn').addEventListener('click', openAddModal);
   document.getElementById('addPersonEmptyBtn').addEventListener('click', openAddModal);
   document.getElementById('addPersonPeopleBtn').addEventListener('click', openAddModal);
 
-  // Modal controls
   document.getElementById('modalClose').addEventListener('click', closeModal);
   document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
   document.getElementById('savePersonBtn').addEventListener('click', savePerson);
@@ -881,19 +1105,15 @@ function bindEvents() {
     if (editingId !== null) promptDelete(editingId);
   });
 
-  // Close modal on overlay click
   personModal.addEventListener('click', e => { if (e.target === personModal) closeModal(); });
 
-  // Delete modal controls
   document.getElementById('deleteModalClose').addEventListener('click', () => deleteModal.classList.add('hidden'));
   document.getElementById('cancelDeleteBtn').addEventListener('click', () => deleteModal.classList.add('hidden'));
   document.getElementById('confirmDeleteBtn').addEventListener('click', confirmDelete);
   deleteModal.addEventListener('click', e => { if (e.target === deleteModal) deleteModal.classList.add('hidden'); });
 
-  // Detail panel close
   document.getElementById('detailClose').addEventListener('click', closeDetail);
 
-  // Photo upload
   photoUploadArea.addEventListener('click', () => photoInput.click());
   photoInput.addEventListener('change', () => {
     const file = photoInput.files[0];
@@ -908,7 +1128,6 @@ function bindEvents() {
     reader.readAsDataURL(file);
   });
 
-  // Keyboard: Enter to save modal, Escape to close
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       if (!personModal.classList.contains('hidden')) closeModal();
@@ -922,7 +1141,6 @@ function bindEvents() {
     }
   });
 
-  // Export / Import
   document.getElementById('exportBtn').addEventListener('click', exportData);
   document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
   document.getElementById('importFile').addEventListener('change', e => {
@@ -930,7 +1148,6 @@ function bindEvents() {
     if (file) { importData(file); e.target.value = ''; }
   });
 
-  // Glossary search
   document.getElementById('glossarySearch').addEventListener('input', e => filterGlossary(e.target.value));
 }
 

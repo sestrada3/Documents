@@ -109,20 +109,87 @@
           <input type="file" id="photoInput" accept="image/*" style="display:none"/>
         </div>
 
-        <!-- Basic Info -->
+        <!-- Name Fields -->
         <div class="form-grid">
+          <div class="form-group">
+            <label for="fieldFirstName">First Name <span class="required">*</span></label>
+            <input type="text" id="fieldFirstName" placeholder="e.g. Jane" />
+          </div>
+          <div class="form-group">
+            <label for="fieldMiddleName">Middle Name</label>
+            <input type="text" id="fieldMiddleName" placeholder="e.g. Elizabeth" />
+          </div>
+          <div class="form-group">
+            <label for="fieldMaidenName">Maiden Name</label>
+            <input type="text" id="fieldMaidenName" placeholder="e.g. O'Brien" />
+          </div>
+          <div class="form-group">
+            <label for="fieldLastName">Last Name</label>
+            <input type="text" id="fieldLastName" placeholder="e.g. Smith" />
+          </div>
           <div class="form-group full">
-            <label for="fieldName">Full Name <span class="required">*</span></label>
-            <input type="text" id="fieldName" placeholder="e.g. Jane Elizabeth Smith" />
+            <label for="fieldOtherNames">Other Names / Nicknames</label>
+            <input type="text" id="fieldOtherNames" placeholder="e.g. Lizzy, Betty (optional)" />
           </div>
-          <div class="form-group">
-            <label for="fieldBirth">Birth Date</label>
-            <input type="text" id="fieldBirth" placeholder="e.g. 14 Mar 1952" />
+        </div>
+
+        <hr class="form-divider" />
+
+        <!-- Dates & Gender -->
+        <div class="form-grid">
+
+          <!-- Birth Date -->
+          <div class="form-group full">
+            <label>Birth Date</label>
+            <div class="date-picker-row">
+              <select id="fieldBirthDay" class="date-select">
+                <option value="">Day</option>
+              </select>
+              <select id="fieldBirthMonth" class="date-select">
+                <option value="">Month</option>
+                <option value="01">January</option>
+                <option value="02">February</option>
+                <option value="03">March</option>
+                <option value="04">April</option>
+                <option value="05">May</option>
+                <option value="06">June</option>
+                <option value="07">July</option>
+                <option value="08">August</option>
+                <option value="09">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+              </select>
+              <input type="number" id="fieldBirthYear" class="date-year" placeholder="Year" min="1" max="2099" />
+            </div>
           </div>
-          <div class="form-group">
-            <label for="fieldDeath">Death Date</label>
-            <input type="text" id="fieldDeath" placeholder="Leave blank if living" />
+
+          <!-- Death Date -->
+          <div class="form-group full">
+            <label>Death Date <span class="label-note">(leave blank if living)</span></label>
+            <div class="date-picker-row">
+              <select id="fieldDeathDay" class="date-select">
+                <option value="">Day</option>
+              </select>
+              <select id="fieldDeathMonth" class="date-select">
+                <option value="">Month</option>
+                <option value="01">January</option>
+                <option value="02">February</option>
+                <option value="03">March</option>
+                <option value="04">April</option>
+                <option value="05">May</option>
+                <option value="06">June</option>
+                <option value="07">July</option>
+                <option value="08">August</option>
+                <option value="09">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+              </select>
+              <input type="number" id="fieldDeathYear" class="date-year" placeholder="Year" min="1" max="2099" />
+            </div>
           </div>
+
           <div class="form-group">
             <label for="fieldGender">Gender</label>
             <select id="fieldGender">
@@ -133,14 +200,16 @@
               <option value="other">Other / Prefer not to say</option>
             </select>
           </div>
+
+          <!-- Birthplace Location -->
           <div class="form-group">
-            <label for="fieldNickname">Nickname / Maiden Name</label>
-            <input type="text" id="fieldNickname" placeholder="Optional" />
-          </div>
-          <div class="form-group full">
             <label for="fieldBirthplace">Birthplace</label>
-            <input type="text" id="fieldBirthplace" placeholder="e.g. Dublin, Ireland" />
+            <div class="location-wrap">
+              <input type="text" id="fieldBirthplace" placeholder="Start typing a city…" autocomplete="off" />
+              <ul class="location-dropdown" id="birthplaceDropdown"></ul>
+            </div>
           </div>
+
           <div class="form-group full">
             <label for="fieldBio">Bio / Notes</label>
             <textarea id="fieldBio" rows="3" placeholder="Any additional information…"></textarea>
