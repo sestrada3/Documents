@@ -8,6 +8,66 @@ let nextId  = 1;
 let editingId = null;
 let pendingDeleteId = null;
 
+// ── Firebase ─────────────────────────────────────────────────
+const FIREBASE_CONFIG = {
+  apiKey:            'AIzaSyAsYZ0sbusitUQ5YkBnJ8rL4TySXsiu7uE',
+  authDomain:        'estradasphere-55a3c.firebaseapp.com',
+  databaseURL:       'https://estradasphere-55a3c-default-rtdb.firebaseio.com',
+  projectId:         'estradasphere-55a3c',
+  storageBucket:     'estradasphere-55a3c.firebasestorage.app',
+  messagingSenderId: '632911162499',
+  appId:             '1:632911162499:web:5c7febd7495b94cf04bfb6',
+  measurementId:     'G-E0WZYPLKZ0'
+};
+let treeRef = null; // Firebase Realtime Database reference
+
+function initFirebase() {
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.database();
+  treeRef = db.ref('familyTree');
+
+  // Real-time listener — fires on page load AND whenever any user saves a change
+  treeRef.on('value', snapshot => {
+    const data = snapshot.val();
+    if (data && Array.isArray(data.people)) {
+      people = data.people.map(migratePersonData);
+      nextId  = data.nextId || (Math.max(0, ...people.map(p => p.id)) + 1);
+    } else {
+      people = [];
+      nextId  = 1;
+    }
+    renderTree();
+    renderPeopleGrid();
+  }, err => {
+    console.error('Firebase read error:', err);
+  });
+}
+
+function saveToFirebase() {
+  if (!treeRef) return;
+  treeRef.set({ people, nextId }).catch(err => {
+    console.error('Firebase save failed:', err);
+    alert('⚠️ Save failed. Check your internet connection and try again.');
+  });
+}
+
+/** Migrate old single-name format to new firstName/lastName fields */
+function migratePersonData(p) {
+  if (!p.firstName && p.name) {
+    const cleaned = p.name.replace(/\[née [^\]]+\]/g, '').trim();
+    const parts   = cleaned.split(/\s+/);
+    p.firstName  = parts[0] || '';
+    p.middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : (p.middleName || '');
+    p.lastName   = parts.length > 1 ? parts[parts.length - 1] : (p.lastName || '');
+    p.maidenName = p.maidenName || p.nickname || '';
+    p.otherNames = p.otherNames || '';
+  }
+  if (!p.parents)  p.parents  = [];
+  if (!p.spouses)  p.spouses  = [];
+  if (!p.children) p.children = [];
+  return p;
+}
+
 // ── Relationship chip state ──────────────────────────────────
 // Tracks which person IDs are selected for each relationship type
 const relState = {
@@ -165,6 +225,34 @@ function buildShortName(p) {
   if (p.lastName)  parts.push(p.lastName);
   if (parts.length === 0 && p.name) return p.name;
   return parts.join(' ') || '(No Name)';
+}
+
+// ── Photo Compression ────────────────────────────────────────
+/**
+ * Resize & compress an image file to max 200×200px JPEG at 70% quality.
+ * Reduces a typical phone photo from 3 MB → ~30 KB.
+ */
+function compressImage(file, callback) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 200;
+      let { width, height } = img;
+      if (width > height) {
+        if (width > MAX) { height = Math.round(height * MAX / width); width = MAX; }
+      } else {
+        if (height > MAX) { width = Math.round(width * MAX / height); height = MAX; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width  = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      callback(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 // ── Utilities ────────────────────────────────────────────────
@@ -529,8 +617,7 @@ function savePerson() {
   }
 
   closeModal();
-  renderTree();
-  renderPeopleGrid();
+  saveToFirebase();
 }
 
 // Keep relationships two-way consistent
@@ -576,8 +663,7 @@ function confirmDelete() {
   pendingDeleteId = null;
   deleteModal.classList.add('hidden');
   closeDetail();
-  renderTree();
-  renderPeopleGrid();
+  saveToFirebase();
 }
 
 // ── Detail Panel ─────────────────────────────────────────────
@@ -1063,8 +1149,7 @@ function importData(file) {
           return p;
         });
         nextId = data.nextId || (Math.max(0, ...people.map(p => p.id)) + 1);
-        renderTree();
-        renderPeopleGrid();
+        saveToFirebase(); // saves imported data to Firebase for all users
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(s => s.classList.remove('active'));
         document.querySelector('[data-tab="tree"]').classList.add('active');
@@ -1246,9 +1331,8 @@ function init() {
   ['parents', 'spouses', 'children'].forEach(rt => initRelSearch(rt));
 
   buildGlossary();
-  renderTree();
-  renderPeopleGrid();
   bindEvents();
+  initFirebase(); // connects to Firebase and triggers initial render via listener
 }
 
 function bindEvents() {
@@ -1289,14 +1373,13 @@ function bindEvents() {
   photoInput.addEventListener('change', () => {
     const file = photoInput.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      currentPhotoData = e.target.result;
-      photoPreview.src = currentPhotoData;
+    // Compress to max 200×200px JPEG @ 70% before storing
+    compressImage(file, compressed => {
+      currentPhotoData = compressed;
+      photoPreview.src = compressed;
       photoPreview.style.display = 'block';
       photoPlaceholder.style.display = 'none';
-    };
-    reader.readAsDataURL(file);
+    });
   });
 
   document.addEventListener('keydown', e => {
