@@ -36,6 +36,7 @@ function initFirebase() {
       people = [];
       nextId  = 1;
     }
+    autoFitted = false; // allow fit-to-view to run again after new data
     renderTree();
     renderPeopleGrid();
   }, err => {
@@ -77,7 +78,8 @@ const relState = {
 };
 
 // ── Layout State ────────────────────────────────────────────
-let transform = { x: 0, y: 0, scale: 1 };
+let transform  = { x: 0, y: 0, scale: 1 };
+let autoFitted = false; // tracks whether fit-to-view has run after latest data load
 const NODE_W  = 160;
 const NODE_H  = 200;
 const H_GAP   = 40;
@@ -722,6 +724,9 @@ function showDetail(id) {
     addGroup('Siblings', [...siblingIds]);
   }
 
+  // Relationship finder widget (only useful when there are ≥2 people)
+  if (people.length >= 2) initRelFinder(id);
+
   document.getElementById('detailEditBtn').onclick = () => openEditModal(id);
   detailPanel.classList.remove('hidden');
 }
@@ -1040,6 +1045,12 @@ function renderTree() {
     node.addEventListener('click', () => showDetail(id));
     treeCanvas.appendChild(node);
   });
+
+  // Auto-fit the first time data loads (not on every manual re-render)
+  if (!autoFitted) {
+    autoFitted = true;
+    setTimeout(fitToView, 0); // defer so DOM has painted the nodes
+  }
 }
 
 function drawLines(positions) {
@@ -1074,23 +1085,28 @@ function drawLines(positions) {
       const px   = pPos.x + NODE_W / 2;
       const py   = pPos.y + NODE_H;
       const cy0  = validChildren[0].pos.y;        // top of child row (all same gen = same Y)
-      const midY = Math.round((py + cy0) / 2);    // halfway between parent bottom and child top
 
-      // 1. Vertical stem: parent bottom → midY
-      svgLines.appendChild(makeLine(px, py, px, midY, '#94a3b8', 2));
+      // Stagger each parent's junction bar by column so siblings of different
+      // families don't appear on the same horizontal line.
+      // col * 7px ensures bars from Sasha→Mallory and Phaedra→Aliyana sit at
+      // different Y levels and can't be mistaken for one connected bar.
+      const junctionY = py + 20 + (pPos.col * 7);
 
-      // 2. Horizontal bar at midY spanning from leftmost to rightmost point
+      // 1. Vertical stem: parent bottom → junctionY
+      svgLines.appendChild(makeLine(px, py, px, junctionY, '#94a3b8', 2));
+
+      // 2. Horizontal bar at junctionY spanning from leftmost to rightmost point
       const childXs = validChildren.map(c => c.pos.x + NODE_W / 2);
       const minX    = Math.min(px, ...childXs);
       const maxX    = Math.max(px, ...childXs);
       if (minX < maxX) {
-        svgLines.appendChild(makeLine(minX, midY, maxX, midY, '#94a3b8', 2));
+        svgLines.appendChild(makeLine(minX, junctionY, maxX, junctionY, '#94a3b8', 2));
       }
 
-      // 3. Vertical drops: midY → each child's top
+      // 3. Vertical drops: junctionY → each child's top
       validChildren.forEach(c => {
         const cx = c.pos.x + NODE_W / 2;
-        svgLines.appendChild(makeLine(cx, midY, cx, c.pos.y, '#94a3b8', 2));
+        svgLines.appendChild(makeLine(cx, junctionY, cx, c.pos.y, '#94a3b8', 2));
       });
     }
 
@@ -1176,6 +1192,364 @@ function applyTransform() {
   treeCanvas.style.transform = t;
   treeSvg.style.transform    = t;
   treeSvg.style.transformOrigin = '0 0';
+}
+
+// ── Fit to View ──────────────────────────────────────────────
+/**
+ * Scale + pan the tree so all nodes fit inside the visible viewport.
+ * Reads node positions directly from the rendered DOM so it always works.
+ */
+function fitToView() {
+  const nodes = treeCanvas.querySelectorAll('.person-node');
+  if (nodes.length === 0) return;
+
+  const wrapperRect = treeWrapper.getBoundingClientRect();
+  const PADDING = 50;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  nodes.forEach(node => {
+    const x = parseFloat(node.style.left) || 0;
+    const y = parseFloat(node.style.top)  || 0;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + NODE_W);
+    maxY = Math.max(maxY, y + NODE_H);
+  });
+
+  const contentW = maxX - minX;
+  const contentH = maxY - minY;
+  if (contentW === 0 || contentH === 0) return;
+
+  const scaleX = (wrapperRect.width  - PADDING * 2) / contentW;
+  const scaleY = (wrapperRect.height - PADDING * 2) / contentH;
+  const newScale = Math.min(scaleX, scaleY, 1.4);
+
+  transform.scale = Math.max(0.15, newScale);
+  transform.x = (wrapperRect.width  - contentW * transform.scale) / 2 - minX * transform.scale;
+  transform.y = (wrapperRect.height - contentH * transform.scale) / 2 - minY * transform.scale;
+  applyTransform();
+}
+
+// ── Tree Search ───────────────────────────────────────────────
+function initTreeSearch() {
+  const input    = document.getElementById('treeSearch');
+  const dropdown = document.getElementById('treeSearchDropdown');
+  let debounce   = null;
+
+  input.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => renderTreeSearchResults(), 150);
+  });
+
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) renderTreeSearchResults();
+  });
+
+  input.addEventListener('keydown', e => {
+    const items  = dropdown.querySelectorAll('.tree-search-option');
+    const active = dropdown.querySelector('.tree-search-option.active');
+    let idx = active ? parseInt(active.dataset.idx) : -1;
+
+    if (e.key === 'ArrowDown')  { e.preventDefault(); idx = Math.min(idx + 1, items.length - 1); }
+    else if (e.key === 'ArrowUp')    { e.preventDefault(); idx = Math.max(idx - 1, 0); }
+    else if (e.key === 'Enter' && active) {
+      e.preventDefault();
+      jumpToNode(parseInt(active.dataset.id));
+      clearTreeSearch();
+      return;
+    } else if (e.key === 'Escape') {
+      clearTreeSearch();
+      return;
+    } else return;
+
+    items.forEach(el => el.classList.remove('active'));
+    if (idx >= 0) { items[idx].classList.add('active'); items[idx].scrollIntoView({ block: 'nearest' }); }
+  });
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.tree-search-wrap')) {
+      dropdown.innerHTML = '';
+      dropdown.style.display = 'none';
+    }
+  });
+}
+
+function renderTreeSearchResults() {
+  const input    = document.getElementById('treeSearch');
+  const dropdown = document.getElementById('treeSearchDropdown');
+  const q        = input.value.trim().toLowerCase();
+
+  // Clear previous highlights
+  treeCanvas.querySelectorAll('.person-node.search-highlight').forEach(el =>
+    el.classList.remove('search-highlight')
+  );
+
+  if (!q || people.length === 0) {
+    dropdown.innerHTML = '';
+    dropdown.style.display = 'none';
+    return;
+  }
+
+  const matches = people.filter(p =>
+    buildShortName(p).toLowerCase().includes(q) ||
+    buildDisplayName(p).toLowerCase().includes(q)
+  );
+
+  // Highlight all matches in tree
+  matches.forEach(p => {
+    const node = treeCanvas.querySelector(`[data-id="${p.id}"]`);
+    if (node) node.classList.add('search-highlight');
+  });
+
+  dropdown.innerHTML = '';
+  if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+
+  matches.slice(0, 10).forEach((p, i) => {
+    const li = document.createElement('li');
+    li.className = 'tree-search-option';
+    li.dataset.id  = p.id;
+    li.dataset.idx = i;
+    const dates = p.birth ? ` · b. ${p.birth}` : '';
+    li.innerHTML = `<span class="ts-opt-emoji">${genderEmoji(p.gender)}</span>
+                    <span class="ts-opt-name">${buildShortName(p)}</span>
+                    <span class="ts-opt-dates">${dates}</span>`;
+    li.addEventListener('mousedown', e => {
+      e.preventDefault();
+      jumpToNode(p.id);
+      clearTreeSearch();
+    });
+    dropdown.appendChild(li);
+  });
+  dropdown.style.display = 'block';
+}
+
+function clearTreeSearch() {
+  treeCanvas.querySelectorAll('.person-node.search-highlight').forEach(el =>
+    el.classList.remove('search-highlight')
+  );
+  const input    = document.getElementById('treeSearch');
+  const dropdown = document.getElementById('treeSearchDropdown');
+  if (input) input.value = '';
+  if (dropdown) { dropdown.innerHTML = ''; dropdown.style.display = 'none'; }
+}
+
+/**
+ * Pan the viewport so the given node is centred, then show its detail panel.
+ */
+function jumpToNode(id) {
+  // Clear previous highlights
+  treeCanvas.querySelectorAll('.person-node.search-highlight').forEach(el =>
+    el.classList.remove('search-highlight')
+  );
+
+  const node = treeCanvas.querySelector(`[data-id="${id}"]`);
+  if (!node) return;
+
+  node.classList.add('search-highlight');
+
+  const wrapperRect = treeWrapper.getBoundingClientRect();
+  const x = parseFloat(node.style.left) || 0;
+  const y = parseFloat(node.style.top)  || 0;
+
+  transform.x = wrapperRect.width  / 2 - (x + NODE_W / 2) * transform.scale;
+  transform.y = wrapperRect.height / 2 - (y + NODE_H / 2) * transform.scale;
+  applyTransform();
+
+  showDetail(id);
+}
+
+// ── Relationship Calculator ───────────────────────────────────
+/**
+ * BFS from fromId to toId across the full bidirectional graph.
+ * Each edge is one of: 'parent' (we moved down to a child),
+ *                      'child'  (we moved up to a parent),
+ *                      'spouse' (lateral via marriage/partnership).
+ * Returns a human-readable relationship label, or null if no path found.
+ */
+function computeRelationship(fromId, toId) {
+  if (fromId === toId) return null;
+
+  const MAX_DEPTH = 12;
+  const queue   = [{ id: fromId, path: [] }];
+  const visited = new Set([fromId]);
+
+  while (queue.length > 0) {
+    const { id, path } = queue.shift();
+    if (path.length >= MAX_DEPTH) continue;
+
+    const p = getPerson(id);
+    if (!p) continue;
+
+    const neighbors = [];
+    (p.children || []).forEach(cid => neighbors.push({ id: cid, edge: 'parent'  }));
+    (p.parents  || []).forEach(pid => neighbors.push({ id: pid, edge: 'child'   }));
+    (p.spouses  || []).forEach(sid => neighbors.push({ id: sid, edge: 'spouse'  }));
+
+    for (const nb of neighbors) {
+      if (visited.has(nb.id)) continue;
+      const newPath = [...path, nb.edge];
+      if (nb.id === toId) return describeRelationship(newPath);
+      visited.add(nb.id);
+      queue.push({ id: nb.id, path: newPath });
+    }
+  }
+  return null;
+}
+
+/**
+ * Convert an edge-sequence (BFS path) into a plain-English relationship label.
+ * Edge key: 'parent' = moved DOWN (current → child), 'child' = moved UP (current → parent).
+ */
+function describeRelationship(edges) {
+  const e = edges.join(',');
+
+  // ── Direct ────────────────────────────────────────────────
+  if (e === 'parent') return 'child';
+  if (e === 'child')  return 'parent';
+  if (e === 'spouse') return 'spouse / partner';
+
+  // ── Grandparent / grandchild ──────────────────────────────
+  if (e === 'child,child')     return 'grandparent';
+  if (e === 'parent,parent')   return 'grandchild';
+
+  // ── Great-grandparent / great-grandchild ──────────────────
+  if (e === 'child,child,child')       return 'great-grandparent';
+  if (e === 'parent,parent,parent')    return 'great-grandchild';
+  if (e === 'child,child,child,child') return '2× great-grandparent';
+  if (e === 'parent,parent,parent,parent') return '2× great-grandchild';
+  if (e === 'child,child,child,child,child') return '3× great-grandparent';
+  if (e === 'parent,parent,parent,parent,parent') return '3× great-grandchild';
+
+  // ── Siblings ──────────────────────────────────────────────
+  if (e === 'child,parent') return 'sibling';
+
+  // ── Aunts / Uncles ────────────────────────────────────────
+  if (e === 'child,child,parent')        return 'aunt / uncle';
+  if (e === 'child,parent,parent')       return 'niece / nephew';
+  if (e === 'child,child,child,parent')  return 'great-aunt / great-uncle';
+  if (e === 'child,parent,parent,parent') return 'great-niece / great-nephew';
+  if (e === 'child,child,child,child,parent') return '2× great-aunt / great-uncle';
+  if (e === 'child,parent,parent,parent,parent') return '2× great-niece / great-nephew';
+
+  // ── Cousins ───────────────────────────────────────────────
+  if (e === 'child,child,parent,parent')                 return '1st cousin';
+  if (e === 'child,child,child,parent,parent,parent')    return '2nd cousin';
+  if (e === 'child,child,child,child,parent,parent,parent,parent') return '3rd cousin';
+
+  // 1st cousin once removed (two variants: up or down)
+  if (e === 'child,child,parent,parent,parent')          return '1st cousin once removed';
+  if (e === 'child,child,child,parent,parent')           return '1st cousin once removed';
+
+  // 2nd cousin once removed
+  if (e === 'child,child,child,parent,parent,parent,parent') return '2nd cousin once removed';
+  if (e === 'child,child,child,child,parent,parent,parent')  return '2nd cousin once removed';
+
+  // 1st cousin twice removed
+  if (e === 'child,child,parent,parent,parent,parent')   return '1st cousin twice removed';
+  if (e === 'child,child,child,child,parent,parent')     return '1st cousin twice removed';
+
+  // 3rd cousin once removed
+  if (e === 'child,child,child,child,parent,parent,parent,parent,parent') return '3rd cousin once removed';
+  if (e === 'child,child,child,child,child,parent,parent,parent,parent')  return '3rd cousin once removed';
+
+  // ── In-laws ───────────────────────────────────────────────
+  if (e === 'spouse,child')            return 'parent-in-law';
+  if (e === 'spouse,parent')           return 'child-in-law';
+  if (e === 'child,spouse')            return 'step-parent';
+  if (e === 'parent,spouse')           return 'step-child';
+  if (e === 'spouse,child,parent')     return 'sibling-in-law';
+  if (e === 'child,spouse,child')      return 'sibling-in-law';
+  if (e === 'spouse,child,child')      return 'grandparent-in-law';
+  if (e === 'spouse,child,parent,parent') return 'sibling-in-law';
+  if (e === 'child,child,spouse')      return 'step-grandparent';
+  if (e === 'spouse,parent,parent')    return 'grandchild-in-law';
+
+  // ── Fallback: step-by-step plain description ──────────────
+  return describePathFallback(edges);
+}
+
+function describePathFallback(edges) {
+  const steps = [];
+  edges.forEach(edge => {
+    if (edge === 'parent') steps.push('child of');
+    else if (edge === 'child')  steps.push('parent of');
+    else if (edge === 'spouse') steps.push('partner of');
+  });
+  return steps.join(' → ');
+}
+
+/**
+ * Inject a relationship-finder widget at the bottom of the detail panel.
+ * fromId = the currently displayed person.
+ */
+function initRelFinder(fromId) {
+  const section = document.createElement('div');
+  section.className = 'detail-rel-finder';
+  section.innerHTML = `
+    <div class="detail-rel-label">🔗 Relationship Finder</div>
+    <div class="rel-finder-wrap">
+      <input type="text" class="rel-finder-input" id="relFinderInput"
+             placeholder="Search for another person…" autocomplete="off"/>
+      <ul class="rel-finder-dropdown" id="relFinderDropdown"></ul>
+      <div class="rel-finder-result" id="relFinderResult"></div>
+    </div>`;
+  detailRels.appendChild(section);
+
+  const input    = document.getElementById('relFinderInput');
+  const dropdown = document.getElementById('relFinderDropdown');
+  const result   = document.getElementById('relFinderResult');
+  let deb = null;
+
+  input.addEventListener('input', () => {
+    clearTimeout(deb);
+    deb = setTimeout(() => {
+      const q = input.value.trim().toLowerCase();
+      dropdown.innerHTML = '';
+      result.innerHTML   = '';
+      if (!q) { dropdown.style.display = 'none'; return; }
+
+      const matches = people.filter(p =>
+        p.id !== fromId &&
+        (buildShortName(p).toLowerCase().includes(q) ||
+         buildDisplayName(p).toLowerCase().includes(q))
+      );
+
+      if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+
+      matches.slice(0, 7).forEach(p => {
+        const li = document.createElement('li');
+        li.className = 'rel-finder-option';
+        li.innerHTML = `${genderEmoji(p.gender)} ${buildShortName(p)}`;
+        li.addEventListener('mousedown', ev => {
+          ev.preventDefault();
+          input.value = buildShortName(p);
+          dropdown.innerHTML = '';
+          dropdown.style.display = 'none';
+
+          const rel      = computeRelationship(fromId, p.id);
+          const fromName = buildShortName(getPerson(fromId));
+          const toName   = buildShortName(p);
+
+          if (rel) {
+            result.innerHTML =
+              `<span class="rel-found">🔗 <strong>${fromName}</strong> is the <em>${rel}</em> of <strong>${toName}</strong></span>`;
+          } else {
+            result.innerHTML =
+              `<span class="rel-not-found">No relationship path found between these two people.</span>`;
+          }
+        });
+        dropdown.appendChild(li);
+      });
+      dropdown.style.display = 'block';
+    }, 150);
+  });
+
+  document.addEventListener('click', ev => {
+    if (!ev.target.closest('.rel-finder-wrap')) {
+      dropdown.innerHTML = '';
+      dropdown.style.display = 'none';
+    }
+  });
 }
 
 // ── Location Autocomplete (Nominatim) ────────────────────────
@@ -1452,6 +1826,7 @@ function init() {
   ['parents', 'spouses', 'children'].forEach(rt => initRelSearch(rt));
 
   buildGlossary();
+  initTreeSearch();
   bindEvents();
   initFirebase(); // connects to Firebase and triggers initial render via listener
 }
@@ -1524,6 +1899,7 @@ function bindEvents() {
     if (file) { importData(file); e.target.value = ''; }
   });
 
+  document.getElementById('zoomFit').addEventListener('click', fitToView);
   document.getElementById('glossarySearch').addEventListener('input', e => filterGlossary(e.target.value));
 }
 
