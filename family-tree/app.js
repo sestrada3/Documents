@@ -988,6 +988,49 @@ function layoutTree() {
     byGen.set(gen, ordered);
   });
 
+  // ── Step 6b: Family-grouping pass ────────────────────────
+  // Re-order each generation so children of the same parent-set are adjacent
+  // (not interleaved with children of other parents).  Without this pass the
+  // barycenter sort may place e.g. Mallory between John's four kids, which
+  // causes John's connector bar to visually span across her.
+  byGen.forEach((ids, gen) => {
+    // Build parentKey → [childIds in this gen]
+    const familyGroups = new Map();
+    ids.forEach(id => {
+      const p = getPerson(id);
+      const posParentIds = (p?.parents || [])
+        .filter(pid => genMap.has(pid) && genMap.get(pid) < gen)
+        .sort((a, b) => a - b);
+      const key = posParentIds.join(',') || '__unparented__';
+      if (!familyGroups.has(key)) familyGroups.set(key, []);
+      familyGroups.get(key).push(id);
+    });
+
+    if (familyGroups.size <= 1) return; // nothing to reorder
+
+    // Sort groups left-to-right by the average column index of their parents
+    const parentGen0 = gen - 1;
+    const parentRow  = byGen.get(parentGen0) || [];
+
+    const sortedGroups = [...familyGroups.entries()]
+      .map(([key, childIds]) => {
+        let avgParentCol = Infinity;
+        if (key !== '__unparented__') {
+          const pids  = key.split(',').map(Number);
+          const cols  = pids.map(pid => parentRow.indexOf(pid)).filter(c => c !== -1);
+          avgParentCol = cols.length
+            ? cols.reduce((s, c) => s + c, 0) / cols.length
+            : Infinity;
+        }
+        // preserve existing barycenter order within each group
+        childIds.sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
+        return { childIds, avgParentCol };
+      })
+      .sort((a, b) => a.avgParentCol - b.avgParentCol);
+
+    byGen.set(gen, sortedGroups.flatMap(g => g.childIds));
+  });
+
   // ── Step 7: Calculate pixel positions ────────────────────
   const positions = new Map();
   const PADDING_TOP  = 60;
