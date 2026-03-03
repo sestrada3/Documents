@@ -1055,7 +1055,6 @@ function renderTree() {
 
 function drawLines(positions) {
   svgLines.innerHTML = '';
-  const drawnSpouse = new Set();
 
   // Helper: create an SVG line element
   const makeLine = (x1, y1, x2, y2, stroke, width) => {
@@ -1067,50 +1066,105 @@ function drawLines(positions) {
     return el;
   };
 
+  // ── Family-unit connector drawing ────────────────────────────
+  //
+  // Group every child by its set of positioned parents.
+  // This ensures co-parents (e.g. Sasha + Lenox) produce exactly ONE
+  // combined connector to their shared child, rather than two separate
+  // connectors that overlap and look wrong.
+  //
+  //   Single parent, many children:
+  //        John
+  //          |
+  //     ─────┼─────
+  //     |  |  |  |
+  //    Am Ka Ri Mo
+  //
+  //   Two co-parents, one child:
+  //     Sasha ♥ Lenox
+  //       |        |
+  //       +────────+   ← horizontal bar at junctionY
+  //            |
+  //          Mallory
+  //
+  const familyMap = new Map(); // parentKey → { parentIds[], childIds[] }
+
+  people.forEach(child => {
+    if (!positions.has(child.id)) return;
+    // Only include parents that appear in the current layout
+    const posParentIds = (child.parents || [])
+      .filter(pid => positions.has(pid))
+      .sort((a, b) => a - b); // stable sort for consistent key
+    if (posParentIds.length === 0) return;
+
+    const key = posParentIds.join(',');
+    if (!familyMap.has(key)) {
+      familyMap.set(key, { parentIds: posParentIds, childIds: [] });
+    }
+    familyMap.get(key).childIds.push(child.id);
+  });
+
+  familyMap.forEach(({ parentIds, childIds }) => {
+    if (childIds.length === 0) return;
+
+    const parentPos = parentIds.map(pid => positions.get(pid));
+    const childPos  = childIds .map(cid => positions.get(cid));
+
+    // Junction Y: 20 px below the bottom of the lowest parent box.
+    // Using max() handles the rare case of parents at different generations.
+    const junctionY = Math.max(...parentPos.map(pp => pp.y + NODE_H)) + 20;
+
+    // ── 1. Vertical stems: each parent's bottom-centre → junctionY ──
+    const parentXs = parentPos.map(pp => pp.x + NODE_W / 2);
+    parentPos.forEach((pp, i) => {
+      svgLines.appendChild(
+        makeLine(parentXs[i], pp.y + NODE_H, parentXs[i], junctionY, '#94a3b8', 2)
+      );
+    });
+
+    // ── 2. Horizontal bar connecting all co-parents at junctionY ────
+    //    (for a single parent this bar has zero width and is skipped)
+    if (parentXs.length > 1) {
+      svgLines.appendChild(
+        makeLine(
+          Math.min(...parentXs), junctionY,
+          Math.max(...parentXs), junctionY,
+          '#94a3b8', 2
+        )
+      );
+    }
+
+    // ── 3. Downward connector from midpoint of parents → children ───
+    const mergeX   = parentXs.reduce((s, x) => s + x, 0) / parentXs.length;
+    const childXs  = childPos.map(cp => cp.x + NODE_W / 2);
+    const minCx    = Math.min(...childXs);
+    const maxCx    = Math.max(...childXs);
+
+    if (childIds.length === 1) {
+      // One child: straight vertical (± a short horizontal jog if needed)
+      const cx = childXs[0];
+      if (Math.abs(cx - mergeX) > 1) {
+        // short horizontal segment at junctionY to align over the child
+        svgLines.appendChild(makeLine(mergeX, junctionY, cx, junctionY, '#94a3b8', 2));
+      }
+      svgLines.appendChild(makeLine(cx, junctionY, cx, childPos[0].y, '#94a3b8', 2));
+    } else {
+      // Multiple children: horizontal bar spanning them, then vertical drops
+      const barMinX = Math.min(mergeX, minCx);
+      const barMaxX = Math.max(mergeX, maxCx);
+      svgLines.appendChild(makeLine(barMinX, junctionY, barMaxX, junctionY, '#94a3b8', 2));
+
+      childPos.forEach((cp, i) => {
+        svgLines.appendChild(makeLine(childXs[i], junctionY, childXs[i], cp.y, '#94a3b8', 2));
+      });
+    }
+  });
+
+  // ── Spouse / partner connector ───────────────────────────────
+  const drawnSpouse = new Set();
   people.forEach(p => {
     const pPos = positions.get(p.id);
     if (!pPos) return;
-
-    // ── Parent → children: orthogonal tree connectors ────────
-    // Style:   parent
-    //            |           ← vertical stem to midpoint
-    //         ───┼───        ← horizontal bar spanning children
-    //            |   |       ← vertical drops to each child
-    //          child1 child2
-    const validChildren = (p.children || [])
-      .map(cid => ({ id: cid, pos: positions.get(cid) }))
-      .filter(c => c.pos);
-
-    if (validChildren.length > 0) {
-      const px   = pPos.x + NODE_W / 2;
-      const py   = pPos.y + NODE_H;
-      const cy0  = validChildren[0].pos.y;        // top of child row (all same gen = same Y)
-
-      // Stagger each parent's junction bar by column so siblings of different
-      // families don't appear on the same horizontal line.
-      // col * 7px ensures bars from Sasha→Mallory and Phaedra→Aliyana sit at
-      // different Y levels and can't be mistaken for one connected bar.
-      const junctionY = py + 20 + (pPos.col * 7);
-
-      // 1. Vertical stem: parent bottom → junctionY
-      svgLines.appendChild(makeLine(px, py, px, junctionY, '#94a3b8', 2));
-
-      // 2. Horizontal bar at junctionY spanning from leftmost to rightmost point
-      const childXs = validChildren.map(c => c.pos.x + NODE_W / 2);
-      const minX    = Math.min(px, ...childXs);
-      const maxX    = Math.max(px, ...childXs);
-      if (minX < maxX) {
-        svgLines.appendChild(makeLine(minX, junctionY, maxX, junctionY, '#94a3b8', 2));
-      }
-
-      // 3. Vertical drops: junctionY → each child's top
-      validChildren.forEach(c => {
-        const cx = c.pos.x + NODE_W / 2;
-        svgLines.appendChild(makeLine(cx, junctionY, cx, c.pos.y, '#94a3b8', 2));
-      });
-    }
-
-    // ── Spouse / partner connector ───────────────────────────
     (p.spouses || []).forEach(sid => {
       const key = [p.id, sid].sort().join('-');
       if (drawnSpouse.has(key)) return;
