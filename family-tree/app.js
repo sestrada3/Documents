@@ -988,66 +988,86 @@ function layoutTree() {
     byGen.set(gen, ordered);
   });
 
-  // ── Step 6b: Family-grouping pass ────────────────────────
-  // Re-order each generation so children of the same parent-set are adjacent
-  // (not interleaved with children of other parents).  Without this pass the
-  // barycenter sort may place e.g. Mallory between John's four kids, which
-  // causes John's connector bar to visually span across her.
-  byGen.forEach((ids, gen) => {
-    // Build parentKey → [childIds in this gen]
-    const familyGroups = new Map();
+  // ── Step 7: Calculate pixel positions (family-centred, generation by generation) ──
+  // Each generation is laid out family-group by family-group, with every group
+  // centred directly below its parents' midpoint.  This guarantees that John's
+  // kids, Phaedra's kid, and Sasha+Lenox's kid never interleave in the same row,
+  // and that connector bars can't visually span across unrelated children.
+  const positions  = new Map();
+  const PADDING_TOP  = 60;
+  const PADDING_LEFT = 60;
+  const FAMILY_GAP   = H_GAP; // extra gap inserted between adjacent family groups
+
+  const genNums2 = [...byGen.keys()].sort((a, b) => a - b);
+
+  genNums2.forEach(gen => {
+    const ids = byGen.get(gen);
+    const y   = PADDING_TOP + gen * (NODE_H + V_GAP);
+
+    if (gen === 0) {
+      // Root generation — simple even distribution left-to-right
+      ids.forEach((id, col) => {
+        positions.set(id, {
+          gen, col, x: PADDING_LEFT + col * (NODE_W + H_GAP), y,
+          isolated: isolatedIds.has(id)
+        });
+      });
+      return;
+    }
+
+    // Build family groups using already-calculated parent positions
+    const familyGroupMap = new Map(); // parentKey → { posParentIds, childIds[] }
     ids.forEach(id => {
       const p = getPerson(id);
       const posParentIds = (p?.parents || [])
-        .filter(pid => genMap.has(pid) && genMap.get(pid) < gen)
+        .filter(pid => positions.has(pid))
         .sort((a, b) => a - b);
       const key = posParentIds.join(',') || '__unparented__';
-      if (!familyGroups.has(key)) familyGroups.set(key, []);
-      familyGroups.get(key).push(id);
+      if (!familyGroupMap.has(key)) {
+        familyGroupMap.set(key, { posParentIds, childIds: [] });
+      }
+      familyGroupMap.get(key).childIds.push(id);
     });
 
-    if (familyGroups.size <= 1) return; // nothing to reorder
-
-    // Sort groups left-to-right by the average column index of their parents
-    const parentGen0 = gen - 1;
-    const parentRow  = byGen.get(parentGen0) || [];
-
-    const sortedGroups = [...familyGroups.entries()]
-      .map(([key, childIds]) => {
-        let avgParentCol = Infinity;
-        if (key !== '__unparented__') {
-          const pids  = key.split(',').map(Number);
-          const cols  = pids.map(pid => parentRow.indexOf(pid)).filter(c => c !== -1);
-          avgParentCol = cols.length
-            ? cols.reduce((s, c) => s + c, 0) / cols.length
-            : Infinity;
+    // Sort groups left-to-right by average parent X, then preserve barycenter order within each
+    const groups = [...familyGroupMap.values()]
+      .map(group => {
+        let avgParentX = null;
+        if (group.posParentIds.length > 0) {
+          const xs = group.posParentIds
+            .map(pid => positions.get(pid))
+            .filter(Boolean)
+            .map(pp => pp.x + NODE_W / 2);
+          if (xs.length) avgParentX = xs.reduce((s, x) => s + x, 0) / xs.length;
         }
-        // preserve existing barycenter order within each group
-        childIds.sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
-        return { childIds, avgParentCol };
+        // Keep barycenter order within the group
+        group.childIds.sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
+        return { ...group, avgParentX };
       })
-      .sort((a, b) => a.avgParentCol - b.avgParentCol);
+      .sort((a, b) => (a.avgParentX ?? Infinity) - (b.avgParentX ?? Infinity));
 
-    byGen.set(gen, sortedGroups.flatMap(g => g.childIds));
-  });
+    // Place each group centred under its parents; push right if it would overlap the previous group
+    let cursorX = PADDING_LEFT;
+    groups.forEach(group => {
+      const nKids  = group.childIds.length;
+      const groupW = nKids * (NODE_W + H_GAP) - H_GAP;
 
-  // ── Step 7: Calculate pixel positions ────────────────────
-  const positions = new Map();
-  const PADDING_TOP  = 60;
-  const PADDING_LEFT = 60;
-  let maxCols = 0;
-  byGen.forEach(ids => { if (ids.length > maxCols) maxCols = ids.length; });
+      let startX = cursorX;
+      if (group.avgParentX !== null) {
+        startX = Math.round(group.avgParentX - groupW / 2);
+      }
+      startX = Math.max(startX, cursorX);
+      startX = Math.max(startX, PADDING_LEFT);
 
-  byGen.forEach((ids, gen) => {
-    const totalW = ids.length * (NODE_W + H_GAP) - H_GAP;
-    const startX = PADDING_LEFT + Math.max(0, (maxCols * (NODE_W + H_GAP) - totalW) / 2);
-    ids.forEach((id, col) => {
-      positions.set(id, {
-        gen, col,
-        x: startX + col * (NODE_W + H_GAP),
-        y: PADDING_TOP + gen * (NODE_H + V_GAP),
-        isolated: isolatedIds.has(id)
+      group.childIds.forEach((id, ci) => {
+        positions.set(id, {
+          gen, col: ci,
+          x: startX + ci * (NODE_W + H_GAP), y,
+          isolated: isolatedIds.has(id)
+        });
       });
+
+      cursorX = startX + groupW + H_GAP + FAMILY_GAP;
     });
   });
 
@@ -1099,13 +1119,14 @@ function renderTree() {
 function drawLines(positions) {
   svgLines.innerHTML = '';
 
-  // Helper: create an SVG line element
-  const makeLine = (x1, y1, x2, y2, stroke, width) => {
+  // Helper: create an SVG line element (with optional dash pattern)
+  const makeLine = (x1, y1, x2, y2, stroke, width, dash) => {
     const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     el.setAttribute('x1', x1); el.setAttribute('y1', y1);
     el.setAttribute('x2', x2); el.setAttribute('y2', y2);
     el.setAttribute('stroke', stroke);
     el.setAttribute('stroke-width', width);
+    if (dash) el.setAttribute('stroke-dasharray', dash);
     return el;
   };
 
@@ -1201,6 +1222,44 @@ function drawLines(positions) {
         svgLines.appendChild(makeLine(childXs[i], junctionY, childXs[i], cp.y, '#94a3b8', 2));
       });
     }
+  });
+
+  // ── Co-parent dashed connector ───────────────────────────────
+  // Two people who share a child but are NOT listed as spouses get a
+  // grey dashed line to show they are co-parents (e.g. ex-partner, outside
+  // relationship). This is auto-detected — no extra data field needed.
+  const drawnCo = new Set();
+  people.forEach(p => {
+    if (!positions.has(p.id)) return;
+    const pPos = positions.get(p.id);
+    (p.children || []).forEach(cid => {
+      const child = getPerson(cid);
+      if (!child) return;
+      (child.parents || []).forEach(coId => {
+        if (coId === p.id) return;
+        if ((p.spouses || []).includes(coId)) return; // already shown as spouse ♥
+        const key = [p.id, coId].sort().join('-');
+        if (drawnCo.has(key)) return;
+        drawnCo.add(key);
+        const coPos = positions.get(coId);
+        if (!coPos) return;
+        // Draw a dashed grey line between the two co-parents at mid-box height
+        const y1 = pPos.y + NODE_H / 2;
+        const y2 = coPos.y + NODE_H / 2;
+        let x1, x2;
+        if (pPos.x < coPos.x) { x1 = pPos.x + NODE_W; x2 = coPos.x; }
+        else                   { x1 = pPos.x;           x2 = coPos.x + NODE_W; }
+        svgLines.appendChild(makeLine(x1, y1, x2, y2, '#94a3b8', 1.5, '6,4'));
+        // Small "co-parent" text label at midpoint
+        const lx = (x1 + x2) / 2, ly = Math.min(y1, y2) - 4;
+        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        txt.setAttribute('x', lx); txt.setAttribute('y', ly);
+        txt.setAttribute('text-anchor', 'middle'); txt.setAttribute('font-size', '9');
+        txt.setAttribute('fill', '#94a3b8'); txt.setAttribute('font-style', 'italic');
+        txt.textContent = 'co-parent';
+        svgLines.appendChild(txt);
+      });
+    });
   });
 
   // ── Spouse / partner connector ───────────────────────────────
