@@ -63,27 +63,35 @@ function migratePersonData(p) {
     p.maidenName = p.maidenName || p.nickname || '';
     p.otherNames = p.otherNames || '';
   }
-  if (!p.parents)  p.parents  = [];
-  if (!p.spouses)  p.spouses  = [];
-  if (!p.children) p.children = [];
+  if (!p.parents)     p.parents     = [];
+  if (!p.spouses)     p.spouses     = [];
+  if (!p.children)    p.children    = [];
+  // Migrate: existing spouses with no partnerMeta default to 'married'
+  if (!p.partnerMeta) p.partnerMeta = {};
+  (p.spouses || []).forEach(sid => {
+    if (!p.partnerMeta[sid]) {
+      p.partnerMeta[sid] = { type: 'married', marriedDate: '', divorcedDate: '' };
+    }
+  });
   return p;
 }
 
 // ── Relationship chip state ──────────────────────────────────
 // Tracks which person IDs are selected for each relationship type
 const relState = {
-  parents:  new Set(),
-  spouses:  new Set(),
-  children: new Set()
+  parents:     new Set(),
+  spouses:     new Set(),
+  children:    new Set(),
+  partnerMeta: {}  // { [spouseId]: { type, marriedDate, divorcedDate } }
 };
 
 // ── Layout State ────────────────────────────────────────────
 let transform  = { x: 0, y: 0, scale: 1 };
 let autoFitted = false; // tracks whether fit-to-view has run after latest data load
-const NODE_W  = 160;
-const NODE_H  = 200;
-const H_GAP   = 40;
-const V_GAP   = 90;
+const NODE_W  = 100;
+const NODE_H  = 130;
+const H_GAP   = 60;
+const V_GAP   = 110;
 
 // ── Month names ──────────────────────────────────────────────
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -281,6 +289,60 @@ const REL_LABELS = {
 
 // ── Chip-based Relationship Selectors ────────────────────────
 
+/** Build a compact date-picker row used inside partner-meta */
+function buildPartnerDatePicker(labelText, initialDate, onChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'partner-date-group';
+
+  const lbl = document.createElement('span');
+  lbl.className = 'partner-date-label';
+  lbl.textContent = labelText;
+  wrap.appendChild(lbl);
+
+  const { day, month, year } = parseDateString(initialDate || '');
+
+  // Day
+  const dayEl = document.createElement('select');
+  dayEl.className = 'date-select partner-date-select';
+  dayEl.innerHTML = '<option value="">Day</option>';
+  for (let d = 1; d <= 31; d++) {
+    const o = document.createElement('option');
+    o.value = String(d).padStart(2, '0');
+    o.textContent = d;
+    if (o.value === day) o.selected = true;
+    dayEl.appendChild(o);
+  }
+
+  // Month
+  const monthEl = document.createElement('select');
+  monthEl.className = 'date-select partner-date-select';
+  monthEl.innerHTML = '<option value="">Month</option>';
+  MONTHS_FULL.forEach((name, i) => {
+    const o = document.createElement('option');
+    o.value = String(i + 1).padStart(2, '0');
+    o.textContent = name;
+    if (o.value === month) o.selected = true;
+    monthEl.appendChild(o);
+  });
+
+  // Year
+  const yearEl = document.createElement('input');
+  yearEl.type = 'number';
+  yearEl.className = 'partner-date-year';
+  yearEl.placeholder = 'Year';
+  yearEl.value = year || '';
+
+  const update = () => onChange(buildDateString(dayEl.value, monthEl.value, yearEl.value));
+  dayEl.addEventListener('change', update);
+  monthEl.addEventListener('change', update);
+  yearEl.addEventListener('input', update);
+
+  wrap.appendChild(dayEl);
+  wrap.appendChild(monthEl);
+  wrap.appendChild(yearEl);
+  return wrap;
+}
+
 /** Render chips for a relationship type from relState */
 function renderRelChips(relType) {
   const container = document.getElementById(`relChips-${relType}`);
@@ -288,16 +350,79 @@ function renderRelChips(relType) {
   relState[relType].forEach(id => {
     const p = getPerson(id);
     if (!p) return;
-    const chip = document.createElement('span');
-    chip.className = 'rel-chip-selected';
-    chip.innerHTML = `${genderEmoji(p.gender)} ${buildShortName(p)} <button class="chip-remove" data-id="${id}" data-rel="${relType}" title="Remove">✕</button>`;
-    chip.querySelector('.chip-remove').addEventListener('click', e => {
-      e.stopPropagation();
-      const rmId = parseInt(e.currentTarget.dataset.id);
-      relState[relType].delete(rmId);
-      renderRelChips(relType);
-    });
-    container.appendChild(chip);
+
+    if (relType === 'spouses') {
+      // Ensure meta exists
+      if (!relState.partnerMeta[id]) {
+        relState.partnerMeta[id] = { type: 'married', marriedDate: '', divorcedDate: '' };
+      }
+      const meta = relState.partnerMeta[id];
+
+      const wrap = document.createElement('div');
+      wrap.className = 'spouse-chip-wrap';
+
+      // Name chip
+      const chip = document.createElement('span');
+      chip.className = 'rel-chip-selected';
+      chip.innerHTML = `${genderEmoji(p.gender)} ${buildShortName(p)} <button class="chip-remove" data-id="${id}" title="Remove">✕</button>`;
+      chip.querySelector('.chip-remove').addEventListener('click', e => {
+        e.stopPropagation();
+        relState.spouses.delete(id);
+        delete relState.partnerMeta[id];
+        renderRelChips('spouses');
+      });
+      wrap.appendChild(chip);
+
+      // Meta row
+      const metaRow = document.createElement('div');
+      metaRow.className = 'partner-meta-row';
+
+      // Type selector
+      const typeEl = document.createElement('select');
+      typeEl.className = 'partner-type-select';
+      [
+        { value: 'married', label: '💍 Married' },
+        { value: 'partner', label: '🤝 Partner' },
+        { value: 'ex',      label: '💔 Ex'      }
+      ].forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt.value; o.textContent = opt.label;
+        if (opt.value === meta.type) o.selected = true;
+        typeEl.appendChild(o);
+      });
+      typeEl.addEventListener('change', () => {
+        meta.type = typeEl.value;
+        renderRelChips('spouses'); // re-render to show/hide date fields
+      });
+      metaRow.appendChild(typeEl);
+
+      // Marriage date (shown for married + ex)
+      if (meta.type === 'married' || meta.type === 'ex') {
+        const label = meta.type === 'ex' ? 'Married:' : 'Date:';
+        const mPicker = buildPartnerDatePicker(label, meta.marriedDate, val => { meta.marriedDate = val; });
+        metaRow.appendChild(mPicker);
+      }
+
+      // Separated date (only for ex)
+      if (meta.type === 'ex') {
+        const dPicker = buildPartnerDatePicker('Separated:', meta.divorcedDate, val => { meta.divorcedDate = val; });
+        metaRow.appendChild(dPicker);
+      }
+
+      wrap.appendChild(metaRow);
+      container.appendChild(wrap);
+    } else {
+      const chip = document.createElement('span');
+      chip.className = 'rel-chip-selected';
+      chip.innerHTML = `${genderEmoji(p.gender)} ${buildShortName(p)} <button class="chip-remove" data-id="${id}" data-rel="${relType}" title="Remove">✕</button>`;
+      chip.querySelector('.chip-remove').addEventListener('click', e => {
+        e.stopPropagation();
+        const rmId = parseInt(e.currentTarget.dataset.id);
+        relState[relType].delete(rmId);
+        renderRelChips(relType);
+      });
+      container.appendChild(chip);
+    }
   });
 }
 
@@ -398,16 +523,32 @@ function renderRelSearchResults(relType) {
 
 function addRelChip(relType, id) {
   relState[relType].add(id);
+  // Initialise partner meta when a spouse is added for the first time
+  if (relType === 'spouses' && !relState.partnerMeta[id]) {
+    relState.partnerMeta[id] = { type: 'married', marriedDate: '', divorcedDate: '' };
+  }
   renderRelChips(relType);
 }
 
 /** Populate all three chip selectors from a person's existing data */
 function populateRelSelectors(excludeId, p) {
+  // Reset partnerMeta first
+  relState.partnerMeta = {};
+
   ['parents', 'spouses', 'children'].forEach(relType => {
     relState[relType].clear();
     if (p && p[relType]) {
       p[relType].forEach(id => {
-        if (id !== excludeId) relState[relType].add(id);
+        if (id !== excludeId) {
+          relState[relType].add(id);
+          // Load existing partnerMeta when editing a person who already has spouses
+          if (relType === 'spouses') {
+            const existing = (p.partnerMeta || {})[id];
+            relState.partnerMeta[id] = existing
+              ? { ...existing }
+              : { type: 'married', marriedDate: '', divorcedDate: '' };
+          }
+        }
       });
     }
     renderRelChips(relType);
@@ -583,6 +724,12 @@ function savePerson() {
   const spouses  = [...relState.spouses];
   const children = [...relState.children];
 
+  // Build a clean partnerMeta object (keyed by numeric id, not string)
+  const partnerMeta = {};
+  Object.entries(relState.partnerMeta).forEach(([sid, meta]) => {
+    partnerMeta[parseInt(sid)] = { ...meta };
+  });
+
   if (editingId === null) {
     const id = uid();
     const person = {
@@ -594,10 +741,11 @@ function savePerson() {
       birthplace: fieldBirthplace.value.trim(),
       bio: fieldBio.value.trim(),
       photo: currentPhotoData,
-      parents, spouses, children
+      parents, spouses, children,
+      partnerMeta
     };
     people.push(person);
-    syncRelationships(id, parents, spouses, children);
+    syncRelationships(id, parents, spouses, children, partnerMeta);
   } else {
     const p = getPerson(editingId);
     p.firstName  = firstName;
@@ -615,15 +763,16 @@ function savePerson() {
     p.parents = parents;
     p.spouses = spouses;
     p.children = children;
-    syncRelationships(editingId, parents, spouses, children);
+    p.partnerMeta = partnerMeta;
+    syncRelationships(editingId, parents, spouses, children, partnerMeta);
   }
 
   closeModal();
   saveToFirebase();
 }
 
-// Keep relationships two-way consistent
-function syncRelationships(id, parents, spouses, children) {
+// Keep relationships two-way consistent, and sync partnerMeta to the partner's record
+function syncRelationships(id, parents, spouses, children, partnerMeta) {
   people.forEach(p => {
     if (p.id === id) return;
     if (parents.includes(p.id)) {
@@ -633,8 +782,15 @@ function syncRelationships(id, parents, spouses, children) {
     }
     if (spouses.includes(p.id)) {
       if (!(p.spouses || []).includes(id)) p.spouses = [...(p.spouses || []), id];
+      // Mirror the partnerMeta onto the partner's own record
+      if (partnerMeta && partnerMeta[p.id]) {
+        if (!p.partnerMeta) p.partnerMeta = {};
+        p.partnerMeta[id] = { ...partnerMeta[p.id] };
+      }
     } else {
       p.spouses = (p.spouses || []).filter(s => s !== id);
+      // Remove stale meta from the ex-partner's record
+      if (p.partnerMeta) delete p.partnerMeta[id];
     }
     if (children.includes(p.id)) {
       if (!(p.parents || []).includes(id)) p.parents = [...(p.parents || []), id];
@@ -715,13 +871,109 @@ function showDetail(id) {
   addGroup('Spouse / Partner', p.spouses);
   addGroup('Children', p.children);
 
+  // Collect sibling IDs (need them for the exclusion set below)
+  const siblingIds = new Set();
   if (p.parents && p.parents.length > 0) {
-    const siblingIds = new Set();
     p.parents.forEach(pid => {
       const par = getPerson(pid);
       if (par && par.children) par.children.forEach(cid => { if (cid !== id) siblingIds.add(cid); });
     });
     addGroup('Siblings', [...siblingIds]);
+  }
+
+  // ── Extended Family (computed on-the-fly via BFS) ─────────────
+  // Only show a curated whitelist of relationship types to avoid cluttering
+  // with every distant cousin in a large tree.
+  const EXTENDED_LABELS = new Set([
+    'grandparent', 'grandchild',
+    'great-grandparent', 'great-grandchild',
+    '2× great-grandparent', '2× great-grandchild',
+    '3× great-grandparent', '3× great-grandchild',
+    'parent-in-law', 'child-in-law',
+    'sibling-in-law',
+    'grandparent-in-law', 'grandchild-in-law',
+    'step-parent', 'step-child', 'step-grandparent',
+    'aunt / uncle', 'niece / nephew',
+    'great-aunt / great-uncle', 'great-niece / great-nephew',
+    '1st cousin',
+  ]);
+
+  // IDs already displayed in the direct sections — don't repeat them
+  const shownIds = new Set([
+    id,
+    ...(p.parents  || []),
+    ...(p.spouses  || []),
+    ...(p.children || []),
+    ...siblingIds,
+  ]);
+
+  // Gather extended relatives and group by relationship label
+  const extGroups = new Map(); // label → [id, ...]
+  people.forEach(other => {
+    if (shownIds.has(other.id)) return;
+    const rel = computeRelationship(id, other.id);
+    if (!rel || !EXTENDED_LABELS.has(rel)) return;
+    if (!extGroups.has(rel)) extGroups.set(rel, []);
+    extGroups.get(rel).push(other.id);
+  });
+
+  if (extGroups.size > 0) {
+    // Pretty-print: "parent-in-law" → "Parent-in-Law"
+    const fmtLabel = str => str.replace(/\b\w/g, c => c.toUpperCase());
+
+    const extSection = document.createElement('div');
+    extSection.className = 'detail-extended-family';
+
+    const extHeader = document.createElement('div');
+    extHeader.className = 'detail-ext-header';
+    extHeader.textContent = '🔗 Extended Family';
+    extSection.appendChild(extHeader);
+
+    // Sort labels in a sensible display order
+    const LABEL_ORDER = [
+      'grandparent', 'great-grandparent', '2× great-grandparent', '3× great-grandparent',
+      'grandchild', 'great-grandchild', '2× great-grandchild', '3× great-grandchild',
+      'parent-in-law', 'sibling-in-law', 'child-in-law',
+      'grandparent-in-law', 'grandchild-in-law',
+      'step-parent', 'step-child', 'step-grandparent',
+      'aunt / uncle', 'great-aunt / great-uncle',
+      'niece / nephew', 'great-niece / great-nephew',
+      '1st cousin',
+    ];
+    const sortedLabels = [...extGroups.keys()].sort((a, b) => {
+      const ia = LABEL_ORDER.indexOf(a), ib = LABEL_ORDER.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+
+    sortedLabels.forEach(label => {
+      const ids = extGroups.get(label);
+      const subGroup = document.createElement('div');
+      subGroup.className = 'detail-ext-subgroup';
+
+      const lbl = document.createElement('div');
+      lbl.className = 'detail-ext-label';
+      lbl.textContent = fmtLabel(label);
+      subGroup.appendChild(lbl);
+
+      const chips = document.createElement('div');
+      chips.className = 'detail-rel-chips';
+      ids.forEach(rid => {
+        const rel = getPerson(rid);
+        if (!rel) return;
+        const chip = document.createElement('span');
+        chip.className = 'rel-chip ext-chip';
+        chip.textContent = genderEmoji(rel.gender) + ' ' + buildShortName(rel);
+        chip.addEventListener('click', () => showDetail(rid));
+        chips.appendChild(chip);
+      });
+      subGroup.appendChild(chips);
+      extSection.appendChild(subGroup);
+    });
+
+    detailRels.appendChild(extSection);
   }
 
   // Relationship finder widget (only useful when there are ≥2 people)
@@ -877,6 +1129,49 @@ function layoutTree() {
     });
   }
 
+  // ── Step 2.7: Constraint enforcement ────────────────────────
+  // BFS + barycenter inference can place a parent and child on the same
+  // generation row when the child was visited first via a spouse edge
+  // (e.g. Oscar reached gen 0 through Evangeline before Avelino could
+  // push him to gen 1 as his child).
+  //
+  // Iterate until stable:
+  //   Rule 1 — child gen must be >= parent gen + 1  (push child DOWN if violated)
+  //   Rule 2 — spouses must share the same gen      (level up to the higher of the two)
+  let enforceChanged = true;
+  while (enforceChanged) {
+    enforceChanged = false;
+
+    // Rule 1: push children below their parents
+    people.forEach(p => {
+      if (!genMap.has(p.id)) return;
+      const pGen = genMap.get(p.id);
+      (p.children || []).forEach(cid => {
+        if (!genMap.has(cid)) return;
+        const required = pGen + 1;
+        if (genMap.get(cid) < required) {
+          genMap.set(cid, required);
+          enforceChanged = true;
+        }
+      });
+    });
+
+    // Rule 2: level spouses to the same generation (take the max so nobody moves up past a parent)
+    people.forEach(p => {
+      if (!genMap.has(p.id)) return;
+      (p.spouses || []).forEach(sid => {
+        if (!genMap.has(sid)) return;
+        const pGen = genMap.get(p.id);
+        const sGen = genMap.get(sid);
+        if (pGen !== sGen) {
+          const maxGen = Math.max(pGen, sGen);
+          if (genMap.get(p.id) !== maxGen) { genMap.set(p.id, maxGen); enforceChanged = true; }
+          if (genMap.get(sid) !== maxGen)  { genMap.set(sid,  maxGen); enforceChanged = true; }
+        }
+      });
+    });
+  }
+
   // ── Step 3: Mark truly isolated nodes (no relationships) ─
   people.forEach(p => {
     if (!genMap.has(p.id)) {
@@ -1029,6 +1324,43 @@ function layoutTree() {
       familyGroupMap.get(key).childIds.push(id);
     });
 
+    // ── Co-parent merging ──────────────────────────────────────
+    // An unparented person (e.g. Lenox) who co-parents a child with
+    // someone already in a positioned family group (e.g. Sasha) should
+    // be inserted RIGHT NEXT TO that co-parent, not floated off alone.
+    // This ensures Mallory is centred under both Sasha and Lenox.
+    if (familyGroupMap.has('__unparented__')) {
+      const unparentedGroup = familyGroupMap.get('__unparented__');
+      const remaining = [];
+      unparentedGroup.childIds.forEach(unpId => {
+        const unpPerson = getPerson(unpId);
+        let merged = false;
+        if (unpPerson) {
+          const unpChildSet = new Set(unpPerson.children || []);
+          for (const [key, group] of familyGroupMap.entries()) {
+            if (key === '__unparented__' || merged) continue;
+            for (let gi = 0; gi < group.childIds.length; gi++) {
+              if (merged) break;
+              const gPerson = getPerson(group.childIds[gi]);
+              if (!gPerson) continue;
+              // Check if they share a child
+              const sharesChild = (gPerson.children || []).some(cid => unpChildSet.has(cid));
+              if (sharesChild) {
+                group.childIds.splice(gi + 1, 0, unpId); // insert right after co-parent
+                merged = true;
+              }
+            }
+          }
+        }
+        if (!merged) remaining.push(unpId);
+      });
+      if (remaining.length === 0) {
+        familyGroupMap.delete('__unparented__');
+      } else {
+        unparentedGroup.childIds = remaining;
+      }
+    }
+
     // Sort groups left-to-right by average parent X, then preserve barycenter order within each
     const groups = [...familyGroupMap.values()]
       .map(group => {
@@ -1119,150 +1451,50 @@ function renderTree() {
 function drawLines(positions) {
   svgLines.innerHTML = '';
 
-  // Helper: create an SVG line element (with optional dash pattern)
+  const LINE_COLOR   = '#1e293b'; // dark navy
+  const LINE_WIDTH   = 2;
+  const CO_COLOR     = '#94a3b8'; // grey for co-parent dashed line
+  const DASH_STYLE   = '7,5';
+
+  // ── helpers ──────────────────────────────────────────────────
   const makeLine = (x1, y1, x2, y2, stroke, width, dash) => {
     const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     el.setAttribute('x1', x1); el.setAttribute('y1', y1);
     el.setAttribute('x2', x2); el.setAttribute('y2', y2);
-    el.setAttribute('stroke', stroke);
-    el.setAttribute('stroke-width', width);
+    el.setAttribute('stroke', stroke || LINE_COLOR);
+    el.setAttribute('stroke-width', width || LINE_WIDTH);
     if (dash) el.setAttribute('stroke-dasharray', dash);
     return el;
   };
+  const makeArc = (x1, y1, cpx, cpy, x2, y2, stroke, width, dash) => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    el.setAttribute('d', `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`);
+    el.setAttribute('stroke', stroke || LINE_COLOR);
+    el.setAttribute('stroke-width', width || LINE_WIDTH);
+    el.setAttribute('fill', 'none');
+    if (dash) el.setAttribute('stroke-dasharray', dash);
+    return el;
+  };
+  const makeText = (x, y, text, fill, size) => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    el.setAttribute('x', x); el.setAttribute('y', y);
+    el.setAttribute('text-anchor', 'middle');
+    el.setAttribute('dominant-baseline', 'middle');
+    el.setAttribute('font-size', size || '14');
+    el.setAttribute('fill', fill || LINE_COLOR);
+    el.textContent = text;
+    return el;
+  };
 
-  // ── Family-unit connector drawing ────────────────────────────
+  // ── STEP 1: Spouse / Partner connector ───────────────────────
+  //   Married  → double lines + ♥  (pink)
+  //   Partner  → single solid line + ∞  (blue)
+  //   Ex       → single dashed line + ✕  (red)
   //
-  // Group every child by its set of positioned parents.
-  // This ensures co-parents (e.g. Sasha + Lenox) produce exactly ONE
-  // combined connector to their shared child, rather than two separate
-  // connectors that overlap and look wrong.
-  //
-  //   Single parent, many children:
-  //        John
-  //          |
-  //     ─────┼─────
-  //     |  |  |  |
-  //    Am Ka Ri Mo
-  //
-  //   Two co-parents, one child:
-  //     Sasha ♥ Lenox
-  //       |        |
-  //       +────────+   ← horizontal bar at junctionY
-  //            |
-  //          Mallory
-  //
-  const familyMap = new Map(); // parentKey → { parentIds[], childIds[] }
-
-  people.forEach(child => {
-    if (!positions.has(child.id)) return;
-    // Only include parents that appear in the current layout
-    const posParentIds = (child.parents || [])
-      .filter(pid => positions.has(pid))
-      .sort((a, b) => a - b); // stable sort for consistent key
-    if (posParentIds.length === 0) return;
-
-    const key = posParentIds.join(',');
-    if (!familyMap.has(key)) {
-      familyMap.set(key, { parentIds: posParentIds, childIds: [] });
-    }
-    familyMap.get(key).childIds.push(child.id);
-  });
-
-  familyMap.forEach(({ parentIds, childIds }) => {
-    if (childIds.length === 0) return;
-
-    const parentPos = parentIds.map(pid => positions.get(pid));
-    const childPos  = childIds .map(cid => positions.get(cid));
-
-    // Junction Y: 20 px below the bottom of the lowest parent box.
-    // Using max() handles the rare case of parents at different generations.
-    const junctionY = Math.max(...parentPos.map(pp => pp.y + NODE_H)) + 20;
-
-    // ── 1. Vertical stems: each parent's bottom-centre → junctionY ──
-    const parentXs = parentPos.map(pp => pp.x + NODE_W / 2);
-    parentPos.forEach((pp, i) => {
-      svgLines.appendChild(
-        makeLine(parentXs[i], pp.y + NODE_H, parentXs[i], junctionY, '#94a3b8', 2)
-      );
-    });
-
-    // ── 2. Horizontal bar connecting all co-parents at junctionY ────
-    //    (for a single parent this bar has zero width and is skipped)
-    if (parentXs.length > 1) {
-      svgLines.appendChild(
-        makeLine(
-          Math.min(...parentXs), junctionY,
-          Math.max(...parentXs), junctionY,
-          '#94a3b8', 2
-        )
-      );
-    }
-
-    // ── 3. Downward connector from midpoint of parents → children ───
-    const mergeX   = parentXs.reduce((s, x) => s + x, 0) / parentXs.length;
-    const childXs  = childPos.map(cp => cp.x + NODE_W / 2);
-    const minCx    = Math.min(...childXs);
-    const maxCx    = Math.max(...childXs);
-
-    if (childIds.length === 1) {
-      // One child: straight vertical (± a short horizontal jog if needed)
-      const cx = childXs[0];
-      if (Math.abs(cx - mergeX) > 1) {
-        // short horizontal segment at junctionY to align over the child
-        svgLines.appendChild(makeLine(mergeX, junctionY, cx, junctionY, '#94a3b8', 2));
-      }
-      svgLines.appendChild(makeLine(cx, junctionY, cx, childPos[0].y, '#94a3b8', 2));
-    } else {
-      // Multiple children: horizontal bar spanning them, then vertical drops
-      const barMinX = Math.min(mergeX, minCx);
-      const barMaxX = Math.max(mergeX, maxCx);
-      svgLines.appendChild(makeLine(barMinX, junctionY, barMaxX, junctionY, '#94a3b8', 2));
-
-      childPos.forEach((cp, i) => {
-        svgLines.appendChild(makeLine(childXs[i], junctionY, childXs[i], cp.y, '#94a3b8', 2));
-      });
-    }
-  });
-
-  // ── Co-parent dashed connector ───────────────────────────────
-  // Two people who share a child but are NOT listed as spouses get a
-  // grey dashed line to show they are co-parents (e.g. ex-partner, outside
-  // relationship). This is auto-detected — no extra data field needed.
-  const drawnCo = new Set();
-  people.forEach(p => {
-    if (!positions.has(p.id)) return;
-    const pPos = positions.get(p.id);
-    (p.children || []).forEach(cid => {
-      const child = getPerson(cid);
-      if (!child) return;
-      (child.parents || []).forEach(coId => {
-        if (coId === p.id) return;
-        if ((p.spouses || []).includes(coId)) return; // already shown as spouse ♥
-        const key = [p.id, coId].sort().join('-');
-        if (drawnCo.has(key)) return;
-        drawnCo.add(key);
-        const coPos = positions.get(coId);
-        if (!coPos) return;
-        // Draw a dashed grey line between the two co-parents at mid-box height
-        const y1 = pPos.y + NODE_H / 2;
-        const y2 = coPos.y + NODE_H / 2;
-        let x1, x2;
-        if (pPos.x < coPos.x) { x1 = pPos.x + NODE_W; x2 = coPos.x; }
-        else                   { x1 = pPos.x;           x2 = coPos.x + NODE_W; }
-        svgLines.appendChild(makeLine(x1, y1, x2, y2, '#94a3b8', 1.5, '6,4'));
-        // Small "co-parent" text label at midpoint
-        const lx = (x1 + x2) / 2, ly = Math.min(y1, y2) - 4;
-        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        txt.setAttribute('x', lx); txt.setAttribute('y', ly);
-        txt.setAttribute('text-anchor', 'middle'); txt.setAttribute('font-size', '9');
-        txt.setAttribute('fill', '#94a3b8'); txt.setAttribute('font-style', 'italic');
-        txt.textContent = 'co-parent';
-        svgLines.appendChild(txt);
-      });
-    });
-  });
-
-  // ── Spouse / partner connector ───────────────────────────────
+  //   STRAIGHT when spouses are directly adjacent (no nodes between them).
+  //   ARCED    when other nodes fall between the spouses on the same row —
+  //            the arc rises above the top of the row so it doesn't pass
+  //            through any node.
   const drawnSpouse = new Set();
   people.forEach(p => {
     const pPos = positions.get(p.id);
@@ -1273,17 +1505,202 @@ function drawLines(positions) {
       drawnSpouse.add(key);
       const sPos = positions.get(sid);
       if (!sPos) return;
-      const x1   = pPos.x + NODE_W, y1 = pPos.y + NODE_H / 2;
-      const x2   = sPos.x,          y2 = sPos.y + NODE_H / 2;
-      const midX = (x1 + x2) / 2,   midY = (y1 + y2) / 2;
-      [-3, 3].forEach(offset => {
-        svgLines.appendChild(makeLine(x1, y1 + offset, x2, y2 + offset, '#f472b6', 1.5));
+
+      const leftPos  = pPos.x <= sPos.x ? pPos : sPos;
+      const rightPos = pPos.x <= sPos.x ? sPos : pPos;
+      const leftId   = pPos.x <= sPos.x ? p.id : sid;
+
+      const barY = leftPos.y + NODE_H / 2;
+      const x1   = leftPos.x  + NODE_W;   // right edge of left node
+      const x2   = rightPos.x;             // left edge of right node
+      const midX = (x1 + x2) / 2;
+
+      // Resolve relationship type from partnerMeta (check both sides)
+      const leftPerson = getPerson(leftId);
+      const rightId    = leftId === p.id ? sid : p.id;
+      const meta =
+        (leftPerson?.partnerMeta || {})[rightId] ||
+        (getPerson(rightId)?.partnerMeta || {})[leftId] ||
+        { type: 'married' };
+      const relType = meta.type || 'married';
+
+      // Check if any other node sits between the two spouses on the same row
+      const rowY = leftPos.y;
+      const hasBetween = [...positions.values()].some(pp => {
+        if (Math.abs(pp.y - rowY) > 5) return false; // same row only
+        // Skip the two spouses themselves
+        if (pp.x === leftPos.x && pp.y === leftPos.y) return false;
+        if (pp.x === rightPos.x && pp.y === rightPos.y) return false;
+        const nodeLeft  = pp.x;
+        const nodeRight = pp.x + NODE_W;
+        // Does this node overlap horizontally with the gap between spouses?
+        return nodeRight > x1 && nodeLeft < x2;
       });
-      const heart = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      heart.setAttribute('x', midX); heart.setAttribute('y', midY + 5);
-      heart.setAttribute('text-anchor', 'middle'); heart.setAttribute('font-size', '14');
-      heart.textContent = '♥'; heart.setAttribute('fill', '#f472b6');
-      svgLines.appendChild(heart);
+
+      if (hasBetween) {
+        // ── ARC route: rise above all nodes on this row ──────────
+        // Control point Y is 40px above the top of the row
+        const arcTopY = rowY - 40;
+        const cpX     = midX;
+        const cpY     = arcTopY;
+        // Symbol sits at the top of the arc (approx ¼ + ¾ → midpoint of quadratic = control point blended)
+        const symY = arcTopY + 6;
+
+        if (relType === 'married') {
+          // Two parallel arcs (offset cp vertically by ±3)
+          svgLines.appendChild(makeArc(x1, barY, cpX, cpY - 3, x2, barY, LINE_COLOR, LINE_WIDTH));
+          svgLines.appendChild(makeArc(x1, barY, cpX, cpY + 3, x2, barY, LINE_COLOR, LINE_WIDTH));
+          svgLines.appendChild(makeText(cpX, symY, '♥', '#f472b6', '13'));
+        } else if (relType === 'partner') {
+          svgLines.appendChild(makeArc(x1, barY, cpX, cpY, x2, barY, '#3b82f6', 2));
+          svgLines.appendChild(makeText(cpX, symY, '∞', '#3b82f6', '11'));
+        } else if (relType === 'ex') {
+          svgLines.appendChild(makeArc(x1, barY, cpX, cpY, x2, barY, '#f87171', 2, '6,4'));
+          svgLines.appendChild(makeText(cpX, symY, '✕', '#f87171', '10'));
+        }
+      } else {
+        // ── STRAIGHT route: adjacent spouses ─────────────────────
+        if (relType === 'married') {
+          svgLines.appendChild(makeLine(x1, barY - 2, x2, barY - 2));
+          svgLines.appendChild(makeLine(x1, barY + 2, x2, barY + 2));
+          svgLines.appendChild(makeText(midX, barY, '♥', '#f472b6', '13'));
+        } else if (relType === 'partner') {
+          svgLines.appendChild(makeLine(x1, barY, x2, barY, '#3b82f6', 2));
+          svgLines.appendChild(makeText(midX, barY - 9, '∞', '#3b82f6', '11'));
+        } else if (relType === 'ex') {
+          svgLines.appendChild(makeLine(x1, barY, x2, barY, '#f87171', 2, '6,4'));
+          svgLines.appendChild(makeText(midX, barY - 9, '✕', '#f87171', '10'));
+        }
+      }
+    });
+  });
+
+  // ── STEP 2: Co-parent (not married) dashed connector ─────────
+  //   Single dashed horizontal line at node vertical-centre.
+  //   Only drawn when both parents are on the same generation row
+  //   AND are directly adjacent (no other nodes between them).
+  const drawnCo = new Set();
+  people.forEach(p => {
+    if (!positions.has(p.id)) return;
+    const pPos = positions.get(p.id);
+    (p.children || []).forEach(cid => {
+      const child = getPerson(cid);
+      if (!child) return;
+      (child.parents || []).forEach(coId => {
+        if (coId === p.id) return;
+        if ((p.spouses || []).includes(coId)) return; // already drawn as spouse
+        const key = [p.id, coId].sort().join('-');
+        if (drawnCo.has(key)) return;
+        drawnCo.add(key);
+        const coPos = positions.get(coId);
+        if (!coPos) return;
+
+        // Only draw if same row
+        if (pPos.y !== coPos.y) return;
+
+        const leftPos  = pPos.x <= coPos.x ? pPos  : coPos;
+        const rightPos = pPos.x <= coPos.x ? coPos : pPos;
+
+        // Only draw if directly adjacent — no other node falls in the gap between them
+        const gapStart = leftPos.x + NODE_W; // right edge of left co-parent
+        const gapEnd   = rightPos.x;         // left  edge of right co-parent
+        const hasNodeBetween = [...positions.values()].some(pp => {
+          if (pp.y !== pPos.y) return false;
+          // Skip the two co-parents themselves
+          if (pp.x === leftPos.x) return false;
+          if (pp.x === rightPos.x) return false;
+          // Does any other node overlap the gap between the co-parents?
+          return pp.x + NODE_W > gapStart && pp.x < gapEnd;
+        });
+        if (hasNodeBetween) return;
+
+        const barY = leftPos.y + NODE_H / 2;
+        const x1   = gapStart;
+        const x2   = gapEnd;
+
+        svgLines.appendChild(makeLine(x1, barY, x2, barY, CO_COLOR, 1.5, DASH_STYLE));
+      });
+    });
+  });
+
+  // ── STEP 3: Parent → Children T-connectors ───────────────────
+  //
+  // Pattern (two-parent couple):
+  //
+  //   [Parent A] ══♥══ [Parent B]
+  //                 │              ← vertical stem from centre of couple bar
+  //            ─────┴─────         ← horizontal junction bar
+  //            │         │         ← vertical drops to each child
+  //         [Child1]  [Child2]
+  //
+  // For a SINGLE parent:
+  //   [Parent]
+  //      │       ← stem from bottom-centre of parent node
+  //    [Child]
+  //
+  // The stem always originates at:
+  //   • couple: (midX of parents, barY = node_mid_height)
+  //   • single: (node centre X, node bottom Y)
+  //
+  // junctionY sits halfway between the stem origin and the top of the children.
+
+  // Build a map: sorted-parent-key → { parentIds, childIds }
+  const familyMap = new Map();
+  people.forEach(child => {
+    if (!positions.has(child.id)) return;
+    const posParentIds = (child.parents || [])
+      .filter(pid => positions.has(pid))
+      .sort((a, b) => a - b);
+    if (posParentIds.length === 0) return;
+    const key = posParentIds.join(',');
+    if (!familyMap.has(key)) familyMap.set(key, { parentIds: posParentIds, childIds: [] });
+    familyMap.get(key).childIds.push(child.id);
+  });
+
+  familyMap.forEach(({ parentIds, childIds }) => {
+    if (childIds.length === 0) return;
+
+    const parentPos = parentIds.map(pid => positions.get(pid));
+    const childPos  = childIds.map(cid => positions.get(cid));
+
+    // Centre X between all parents
+    const parentXs = parentPos.map(pp => pp.x + NODE_W / 2);
+    const originX  = Math.round(parentXs.reduce((s, x) => s + x, 0) / parentXs.length);
+
+    // Stem start Y:
+    //  • 2+ parents on the SAME row (married couple): start at the horizontal bar (node mid-height)
+    //  • 2+ parents on DIFFERENT rows (co-parents at different gens): start at bottom of lower parent
+    //  • 1 parent: start at the bottom of the node
+    const sameRow = parentPos.every(pp => pp.y === parentPos[0].y);
+    const stemStartY = parentIds.length >= 2
+      ? (sameRow
+          ? parentPos[0].y + NODE_H / 2                              // couple bar centre (same row)
+          : Math.max(...parentPos.map(pp => pp.y + NODE_H)))         // bottom of lower parent (diff rows)
+      : Math.max(...parentPos.map(pp => pp.y + NODE_H));             // bottom of single parent
+
+    // junctionY: placed 75% of the way down from stemStart to childTop,
+    // keeping the horizontal bar close to the children and well clear of
+    // any nodes or connector lines on the parent row.
+    const childTopY  = Math.min(...childPos.map(cp => cp.y));
+    const junctionY  = Math.round(stemStartY + (childTopY - stemStartY) * 0.75);
+
+    // 1. Vertical stem: stemStart → junctionY
+    svgLines.appendChild(makeLine(originX, stemStartY, originX, junctionY));
+
+    // 2. Horizontal junction/sibling bar
+    //    Extends from the leftmost to rightmost child, BUT also includes
+    //    the stem origin X so the bar always meets the vertical stem even
+    //    when all children have been pushed right of the parent by the cursor.
+    const childXs = childPos.map(cp => cp.x + NODE_W / 2);
+    const barLeft  = Math.min(originX, ...childXs);
+    const barRight = Math.max(originX, ...childXs);
+    if (childXs.length > 1 || barLeft !== barRight) {
+      svgLines.appendChild(makeLine(barLeft, junctionY, barRight, junctionY));
+    }
+
+    // 3. Vertical drops: junctionY → top of each child node
+    childPos.forEach((cp, i) => {
+      svgLines.appendChild(makeLine(childXs[i], junctionY, childXs[i], cp.y));
     });
   });
 }
