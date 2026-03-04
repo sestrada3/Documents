@@ -1510,6 +1510,10 @@ function drawLines(positions) {
       const rightPos = pPos.x <= sPos.x ? sPos : pPos;
       const leftId   = pPos.x <= sPos.x ? p.id : sid;
 
+      // Guard: only draw spouse connectors when both people are on the same generation row.
+      // If they are on different rows (cross-generation), skip — a diagonal arc would be misleading.
+      if (Math.abs(leftPos.y - rightPos.y) > NODE_H * 0.5) return;
+
       const barY = leftPos.y + NODE_H / 2;
       const x1   = leftPos.x  + NODE_W;   // right edge of left node
       const x2   = rightPos.x;             // left edge of right node
@@ -1688,14 +1692,24 @@ function drawLines(positions) {
     svgLines.appendChild(makeLine(originX, stemStartY, originX, junctionY));
 
     // 2. Horizontal junction/sibling bar
-    //    Extends from the leftmost to rightmost child, BUT also includes
-    //    the stem origin X so the bar always meets the vertical stem even
-    //    when all children have been pushed right of the parent by the cursor.
-    const childXs = childPos.map(cp => cp.x + NODE_W / 2);
-    const barLeft  = Math.min(originX, ...childXs);
-    const barRight = Math.max(originX, ...childXs);
-    if (childXs.length > 1 || barLeft !== barRight) {
-      svgLines.appendChild(makeLine(barLeft, junctionY, barRight, junctionY));
+    //    Spans ONLY the children (leftmost to rightmost child center).
+    //    A separate short elbow segment is drawn from the stem (originX) to the
+    //    nearest bar end if the stem lands outside the child range.
+    //    This prevents the bar from extending into unrelated family territory.
+    const childXs      = childPos.map(cp => cp.x + NODE_W / 2);
+    const childBarLeft  = Math.min(...childXs);
+    const childBarRight = Math.max(...childXs);
+
+    // Draw sibling bar across children
+    if (childXs.length > 1 || childBarLeft !== childBarRight) {
+      svgLines.appendChild(makeLine(childBarLeft, junctionY, childBarRight, junctionY));
+    }
+
+    // Draw elbow from stem to bar if stem is outside the child range
+    if (originX < childBarLeft) {
+      svgLines.appendChild(makeLine(originX, junctionY, childBarLeft, junctionY));
+    } else if (originX > childBarRight) {
+      svgLines.appendChild(makeLine(childBarRight, junctionY, originX, junctionY));
     }
 
     // 3. Vertical drops: junctionY → top of each child node
