@@ -1635,10 +1635,6 @@ function drawLines(positions) {
       const rightPos = pPos.x <= sPos.x ? sPos : pPos;
       const leftId   = pPos.x <= sPos.x ? p.id : sid;
 
-      // Guard: only draw spouse connectors when both people are on the same generation row.
-      // If they are on different rows (cross-generation), skip — a diagonal arc would be misleading.
-      if (Math.abs(leftPos.y - rightPos.y) > NODE_H * 0.5) return;
-
       const barY = leftPos.y + NODE_H / 2;
       const x1   = leftPos.x  + NODE_W;   // right edge of left node
       const x2   = rightPos.x;             // left edge of right node
