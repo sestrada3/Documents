@@ -8,6 +8,10 @@ let nextId  = 1;
 let editingId = null;
 let pendingDeleteId = null;
 
+// ── Connect Mode ─────────────────────────────────────────────
+let connectMode   = false;
+let connectFromId = null;
+
 // ── Firebase ─────────────────────────────────────────────────
 const FIREBASE_CONFIG = {
   apiKey:            'AIzaSyAsYZ0sbusitUQ5YkBnJ8rL4TySXsiu7uE',
@@ -987,6 +991,124 @@ function closeDetail() {
   detailPanel.classList.add('hidden');
 }
 
+// ── Connect Mode ─────────────────────────────────────────────
+function toggleConnectMode() {
+  connectMode = !connectMode;
+  connectFromId = null;
+  const btn    = document.getElementById('connectModeBtn');
+  const banner = document.getElementById('connectBanner');
+  const bannerText = document.getElementById('connectBannerText');
+
+  // Clear any leftover selection highlights
+  treeCanvas.querySelectorAll('.person-node.connect-selected').forEach(n => n.classList.remove('connect-selected'));
+
+  if (connectMode) {
+    btn.classList.add('active');
+    bannerText.textContent = 'Click a person to start connecting…';
+    banner.classList.remove('hidden');
+    treeCanvas.classList.add('connect-mode');
+  } else {
+    btn.classList.remove('active');
+    banner.classList.add('hidden');
+    treeCanvas.classList.remove('connect-mode');
+  }
+}
+
+function handleConnectClick(id) {
+  if (!connectMode) return false; // not in connect mode — let normal click proceed
+
+  const bannerText = document.getElementById('connectBannerText');
+
+  if (connectFromId === null) {
+    // First selection
+    connectFromId = id;
+    const node = treeCanvas.querySelector(`[data-id="${id}"]`);
+    if (node) node.classList.add('connect-selected');
+    bannerText.textContent = `Now click another person to connect with ${buildShortName(getPerson(id))}…`;
+    return true;
+  }
+
+  if (id === connectFromId) {
+    // Clicked the same person — deselect
+    const node = treeCanvas.querySelector(`[data-id="${connectFromId}"]`);
+    if (node) node.classList.remove('connect-selected');
+    connectFromId = null;
+    bannerText.textContent = 'Click a person to start connecting…';
+    return true;
+  }
+
+  // Second person selected — open the picker
+  openConnectPicker(connectFromId, id);
+  return true;
+}
+
+function openConnectPicker(idA, idB) {
+  const pA = getPerson(idA);
+  const pB = getPerson(idB);
+  const nameA = buildShortName(pA);
+  const nameB = buildShortName(pB);
+
+  document.getElementById('connectNameA').textContent  = nameA;
+  document.getElementById('connectNameB').textContent  = nameB;
+  document.getElementById('connectNameA2').textContent = nameA;
+  document.getElementById('connectNameB2').textContent = nameB;
+
+  const modal = document.getElementById('connectModal');
+  modal.dataset.idA = idA;
+  modal.dataset.idB = idB;
+  modal.classList.remove('hidden');
+}
+
+function applyConnect(relType) {
+  const modal = document.getElementById('connectModal');
+  const idA   = parseInt(modal.dataset.idA);
+  const idB   = parseInt(modal.dataset.idB);
+  const pA    = getPerson(idA);
+  const pB    = getPerson(idB);
+  if (!pA || !pB) { closeConnectPicker(); return; }
+
+  if (relType === 'parent') {
+    // A is parent of B
+    if (!pA.children) pA.children = [];
+    if (!pB.parents)  pB.parents  = [];
+    if (!pA.children.includes(idB)) pA.children.push(idB);
+    if (!pB.parents.includes(idA))  pB.parents.push(idA);
+  } else if (relType === 'child') {
+    // A is child of B  (B is parent of A)
+    if (!pB.children) pB.children = [];
+    if (!pA.parents)  pA.parents  = [];
+    if (!pB.children.includes(idA)) pB.children.push(idA);
+    if (!pA.parents.includes(idB))  pA.parents.push(idB);
+  } else {
+    // married / partner / ex — both are spouses of each other
+    if (!pA.spouses) pA.spouses = [];
+    if (!pB.spouses) pB.spouses = [];
+    if (!pA.partnerMeta) pA.partnerMeta = {};
+    if (!pB.partnerMeta) pB.partnerMeta = {};
+    if (!pA.spouses.includes(idB)) pA.spouses.push(idB);
+    if (!pB.spouses.includes(idA)) pB.spouses.push(idA);
+    const meta = { type: relType, marriedDate: '', divorcedDate: '' };
+    pA.partnerMeta[idB] = { ...meta };
+    pB.partnerMeta[idA] = { ...meta };
+  }
+
+  closeConnectPicker();
+  saveToFirebase();
+}
+
+function closeConnectPicker() {
+  document.getElementById('connectModal').classList.add('hidden');
+  // Exit connect mode entirely after each connection
+  connectMode   = false;
+  connectFromId = null;
+  const btn = document.getElementById('connectModeBtn');
+  const banner = document.getElementById('connectBanner');
+  if (btn)    btn.classList.remove('active');
+  if (banner) banner.classList.add('hidden');
+  treeCanvas.classList.remove('connect-mode');
+  treeCanvas.querySelectorAll('.person-node.connect-selected').forEach(n => n.classList.remove('connect-selected'));
+}
+
 // ── People Tab ───────────────────────────────────────────────
 function renderPeopleGrid() {
   peopleGrid.innerHTML = '';
@@ -1437,7 +1559,10 @@ function renderTree() {
       <div class="node-name">${buildShortName(p)}</div>
       ${dates ? `<div class="node-dates">${dates}</div>` : ''}`;
 
-    node.addEventListener('click', () => showDetail(id));
+    node.addEventListener('click', () => {
+      if (handleConnectClick(id)) return; // intercept when connect mode is active
+      showDetail(id);
+    });
     treeCanvas.appendChild(node);
   });
 
@@ -2488,6 +2613,31 @@ function bindEvents() {
 
   document.getElementById('zoomFit').addEventListener('click', fitToView);
   document.getElementById('glossarySearch').addEventListener('input', e => filterGlossary(e.target.value));
+
+  // ── Connect mode ──────────────────────────────────────────
+  document.getElementById('connectModeBtn').addEventListener('click', toggleConnectMode);
+  document.getElementById('connectBannerCancel').addEventListener('click', () => {
+    if (connectMode) toggleConnectMode(); // turn off connect mode
+  });
+  document.getElementById('connectModalClose').addEventListener('click', closeConnectPicker);
+  document.getElementById('connectModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('connectModal')) closeConnectPicker();
+  });
+  document.querySelectorAll('.connect-opt').forEach(btn => {
+    btn.addEventListener('click', () => applyConnect(btn.dataset.rel));
+  });
+
+  // Escape should also cancel connect mode
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && connectMode) {
+      const connectModalEl = document.getElementById('connectModal');
+      if (!connectModalEl.classList.contains('hidden')) {
+        closeConnectPicker();
+      } else {
+        toggleConnectMode();
+      }
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);

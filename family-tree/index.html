@@ -32,6 +32,7 @@
     <section id="tab-tree" class="tab-content active">
       <div class="tree-toolbar">
         <button class="btn btn-primary" id="addPersonTreeBtn">+ Add Person</button>
+        <button class="btn btn-connect" id="connectModeBtn" title="Click two people to link them">🔗 Connect</button>
         <div class="zoom-controls">
           <button class="btn btn-icon" id="zoomIn" title="Zoom In">＋</button>
           <button class="btn btn-icon" id="zoomOut" title="Zoom Out">－</button>
@@ -56,6 +57,52 @@
         <div class="tree-canvas" id="treeCanvas">
           <!-- Person node cards rendered here by JS -->
         </div>
+        <!-- Legend -->
+        <div class="tree-legend" id="treeLegend">
+          <div class="legend-title">Legend</div>
+          <div class="legend-item">
+            <svg class="legend-svg" viewBox="0 0 44 16" xmlns="http://www.w3.org/2000/svg">
+              <line x1="2" y1="6" x2="42" y2="6" stroke="#1e293b" stroke-width="2"/>
+              <line x1="2" y1="10" x2="42" y2="10" stroke="#1e293b" stroke-width="2"/>
+              <text x="22" y="9" text-anchor="middle" dominant-baseline="middle" font-size="9" fill="#f472b6">♥</text>
+            </svg>
+            <span>Married</span>
+          </div>
+          <div class="legend-item">
+            <svg class="legend-svg" viewBox="0 0 44 16" xmlns="http://www.w3.org/2000/svg">
+              <line x1="2" y1="8" x2="42" y2="8" stroke="#3b82f6" stroke-width="2"/>
+              <text x="22" y="5" text-anchor="middle" dominant-baseline="middle" font-size="9" fill="#3b82f6">∞</text>
+            </svg>
+            <span>Partner</span>
+          </div>
+          <div class="legend-item">
+            <svg class="legend-svg" viewBox="0 0 44 16" xmlns="http://www.w3.org/2000/svg">
+              <line x1="2" y1="8" x2="42" y2="8" stroke="#f87171" stroke-width="2" stroke-dasharray="6,4"/>
+              <text x="22" y="4" text-anchor="middle" dominant-baseline="middle" font-size="9" fill="#f87171">✕</text>
+            </svg>
+            <span>Ex-Partner</span>
+          </div>
+          <div class="legend-item">
+            <svg class="legend-svg" viewBox="0 0 44 16" xmlns="http://www.w3.org/2000/svg">
+              <line x1="2" y1="8" x2="42" y2="8" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="7,5"/>
+            </svg>
+            <span>Co-Parent</span>
+          </div>
+          <div class="legend-item">
+            <svg class="legend-svg" viewBox="0 0 44 16" xmlns="http://www.w3.org/2000/svg">
+              <line x1="22" y1="1" x2="22" y2="15" stroke="#1e293b" stroke-width="2"/>
+              <line x1="6" y1="10" x2="38" y2="10" stroke="#1e293b" stroke-width="2"/>
+            </svg>
+            <span>Parent–Child</span>
+          </div>
+        </div>
+
+        <!-- Connect-mode banner -->
+        <div class="connect-banner hidden" id="connectBanner">
+          <span id="connectBannerText">Click a person to start connecting…</span>
+          <button class="connect-banner-cancel" id="connectBannerCancel">✕ Cancel</button>
+        </div>
+
         <div class="tree-empty" id="treeEmpty">
           <div class="empty-icon">🌱</div>
           <h2>Your family tree is empty</h2>
@@ -353,6 +400,51 @@
     <p id="detailBio" class="detail-bio"></p>
     <div class="detail-rels" id="detailRels"></div>
     <button class="btn btn-primary btn-full" id="detailEditBtn">✏ Edit This Person</button>
+  </div>
+
+  <!-- ===== CONNECT RELATIONSHIP PICKER MODAL ===== -->
+  <div class="modal-overlay hidden" id="connectModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>🔗 Connect People</h3>
+        <button class="modal-close" id="connectModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="connect-names-label">
+          <strong id="connectNameA"></strong>
+          <span class="connect-arrow"> → </span>
+          <strong id="connectNameB"></strong>
+        </p>
+        <p class="connect-subtitle">Select how <strong id="connectNameA2"></strong> is related to <strong id="connectNameB2"></strong>:</p>
+        <div class="connect-options">
+          <button class="connect-opt" data-rel="parent">
+            <span class="connect-opt-icon">👆</span>
+            <span class="connect-opt-label">Parent</span>
+            <span class="connect-opt-sub">A is B's parent</span>
+          </button>
+          <button class="connect-opt" data-rel="child">
+            <span class="connect-opt-icon">👇</span>
+            <span class="connect-opt-label">Child</span>
+            <span class="connect-opt-sub">A is B's child</span>
+          </button>
+          <button class="connect-opt" data-rel="married">
+            <span class="connect-opt-icon">💍</span>
+            <span class="connect-opt-label">Married</span>
+            <span class="connect-opt-sub">spouses</span>
+          </button>
+          <button class="connect-opt" data-rel="partner">
+            <span class="connect-opt-icon">🤝</span>
+            <span class="connect-opt-label">Partner</span>
+            <span class="connect-opt-sub">relationship</span>
+          </button>
+          <button class="connect-opt" data-rel="ex">
+            <span class="connect-opt-icon">💔</span>
+            <span class="connect-opt-label">Ex</span>
+            <span class="connect-opt-sub">separated</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Firebase SDK (compat build — works without bundler) -->

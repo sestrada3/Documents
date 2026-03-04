@@ -22,8 +22,8 @@
   --male-color:  #3b82f6;
   --female-color:#ec4899;
   --other-color: #8b5cf6;
-  --node-w:      160px;
-  --node-h:      200px;
+  --node-w:      100px;
+  --node-h:      130px;
   --radius:      12px;
   --shadow:      0 1px 3px rgba(0,0,0,.1), 0 4px 12px rgba(0,0,0,.06);
   --shadow-lg:   0 4px 16px rgba(0,0,0,.14), 0 8px 32px rgba(0,0,0,.08);
@@ -273,6 +273,9 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
 .person-node {
   position: absolute;
   width: var(--node-w);
+  height: var(--node-h);
+  min-height: var(--node-h);
+  max-height: var(--node-h);
   background: var(--surface);
   border: 2px solid var(--border);
   border-radius: var(--radius);
@@ -282,10 +285,13 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 10px 10px;
-  gap: 6px;
+  justify-content: flex-start;
+  padding: 8px 8px 6px;
+  gap: 4px;
   text-align: center;
   user-select: none;
+  overflow: hidden;
+  flex-shrink: 0;
 }
 .person-node:hover {
   box-shadow: var(--shadow-lg);
@@ -1060,6 +1066,40 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
 }
 .rel-chip:hover { background: #bfdbfe; }
 
+/* ---------- Extended Family (computed) ---------- */
+.detail-extended-family {
+  border-top: 1.5px dashed var(--border2);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+.detail-ext-header {
+  font-size: .72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.detail-ext-subgroup {
+  margin-bottom: 6px;
+}
+.detail-ext-label {
+  font-size: .7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: capitalize;
+  margin-bottom: 3px;
+  padding-left: 2px;
+}
+.rel-chip.ext-chip {
+  background: #f1f5f9;
+  color: var(--text);
+  border-color: var(--border2);
+  font-size: .73rem;
+  font-weight: 500;
+}
+.rel-chip.ext-chip:hover { background: var(--primary-lt); color: var(--primary-dk); }
+
 /* ---------- Relationship Finder (in detail panel) ---------- */
 .detail-rel-finder {
   border-top: 1.5px solid var(--border);
@@ -1125,6 +1165,236 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
   display: block;
   padding: 4px 2px;
 }
+
+/* ============================================================
+   TREE LEGEND
+   ============================================================ */
+.tree-legend {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  background: rgba(255,255,255,.92);
+  border: 1.5px solid var(--border2);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: var(--shadow);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+.legend-title {
+  font-size: .72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.legend-svg {
+  width: 44px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.legend-item span {
+  font-size: .78rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   PARTNER META (inline spouse relationship details)
+   ============================================================ */
+.spouse-chip-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+}
+.partner-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.partner-type-select {
+  padding: 5px 8px;
+  border: 1.5px solid var(--border2);
+  border-radius: 7px;
+  font-size: .8rem;
+  color: var(--text);
+  background: var(--surface2);
+  cursor: pointer;
+  outline: none;
+  font-family: var(--font);
+  transition: border-color var(--transition);
+}
+.partner-type-select:focus { border-color: var(--primary); }
+.partner-date-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.partner-date-label {
+  font-size: .72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.partner-date-select {
+  padding: 5px 6px !important;
+  font-size: .77rem !important;
+  min-width: 0;
+}
+.partner-date-year {
+  width: 72px !important;
+  padding: 5px 6px !important;
+  font-size: .77rem !important;
+  border: 1.5px solid var(--border2);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  font-family: var(--font);
+  -moz-appearance: textfield;
+}
+.partner-date-year::-webkit-outer-spin-button,
+.partner-date-year::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.partner-date-year:focus { border-color: var(--primary); }
+
+/* ============================================================
+   CONNECT MODE
+   ============================================================ */
+
+/* Connect button in toolbar */
+.btn-connect {
+  background: var(--surface);
+  color: #7c3aed;
+  border: 1.5px solid #7c3aed;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+}
+.btn-connect:hover { background: #ede9fe; }
+.btn-connect.active {
+  background: #7c3aed;
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(124,58,237,.25);
+}
+
+/* Connect-mode banner (floats at top of tree canvas) */
+.connect-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  background: #7c3aed;
+  color: #fff;
+  border-radius: 20px;
+  padding: 9px 18px;
+  font-size: .88rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(124,58,237,.35);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.connect-banner.hidden { display: none !important; }
+.connect-banner-cancel {
+  background: rgba(255,255,255,.2);
+  border: none;
+  border-radius: 12px;
+  color: #fff;
+  font-size: .8rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.connect-banner-cancel:hover { background: rgba(255,255,255,.35); }
+
+/* Nodes in connect mode: crosshair cursor and subtle ring */
+.tree-canvas.connect-mode .person-node {
+  cursor: crosshair !important;
+}
+.tree-canvas.connect-mode .person-node:hover {
+  box-shadow: 0 0 0 3px rgba(124,58,237,.4), var(--shadow-lg) !important;
+  border-color: #7c3aed !important;
+  transform: translateY(-2px);
+}
+
+/* First selected node in connect mode */
+.person-node.connect-selected {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 3px rgba(245,158,11,.4), var(--shadow-lg) !important;
+  z-index: 20;
+}
+
+/* Connect picker modal */
+.connect-names-label {
+  text-align: center;
+  font-size: 1rem;
+  margin-bottom: 4px;
+  background: #ede9fe;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.connect-arrow {
+  color: #7c3aed;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+.connect-subtitle {
+  text-align: center;
+  font-size: .83rem;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.connect-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.connect-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 10px;
+  border: 1.5px solid var(--border2);
+  border-radius: 12px;
+  background: var(--surface2);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), transform var(--transition);
+  font-family: var(--font);
+}
+.connect-opt:hover {
+  background: #ede9fe;
+  border-color: #7c3aed;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+.connect-opt:active { transform: scale(.97); }
+/* Make the "married" option span full width (5th item in 2-col grid) */
+.connect-opt:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.connect-opt-icon { font-size: 1.6rem; line-height: 1; }
+.connect-opt-label { font-size: .88rem; font-weight: 700; color: var(--text); }
+.connect-opt-sub { font-size: .72rem; color: var(--text-muted); }
 
 /* ============================================================
    SCROLLBAR
