@@ -1277,6 +1277,17 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
    CONNECT MODE
    ============================================================ */
 
+/* Repair Data button in toolbar */
+.btn-repair {
+  background: var(--surface);
+  color: #059669;
+  border: 1.5px solid #059669;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: background var(--transition), color var(--transition);
+}
+.btn-repair:hover { background: #ecfdf5; }
+
 /* Connect button in toolbar */
 .btn-connect {
   background: var(--surface);

@@ -1809,28 +1809,36 @@ function drawLines(positions) {
     const childTopY  = Math.min(...childPos.map(cp => cp.y));
     const junctionY  = Math.round(stemStartY + (childTopY - stemStartY) * 0.75);
 
-    // 1. Vertical stem: stemStart → junctionY
-    svgLines.appendChild(makeLine(originX, stemStartY, originX, junctionY));
-
-    // 2. Horizontal junction/sibling bar
-    //    Spans ONLY the children (leftmost to rightmost child center).
-    //    A separate short elbow segment is drawn from the stem (originX) to the
-    //    nearest bar end if the stem lands outside the child range.
-    //    This prevents the bar from extending into unrelated family territory.
     const childXs      = childPos.map(cp => cp.x + NODE_W / 2);
     const childBarLeft  = Math.min(...childXs);
     const childBarRight = Math.max(...childXs);
 
-    // Draw sibling bar across children
-    if (childXs.length > 1 || childBarLeft !== childBarRight) {
-      svgLines.appendChild(makeLine(childBarLeft, junctionY, childBarRight, junctionY));
+    // Does the parent stem land outside the children's x-range?
+    const needsElbow = originX < childBarLeft || originX > childBarRight;
+
+    if (needsElbow) {
+      // ── ELBOW ROUTE: parent is to the left or right of all children ──────
+      // Route the elbow NEAR THE PARENT LEVEL (stemStartY + 15px) so the
+      // horizontal segment stays in the inter-generation gap and never crosses
+      // another family's junction bar down at child level.
+      const elbowY  = stemStartY + 15;
+      const nearEdge = originX < childBarLeft ? childBarLeft : childBarRight;
+
+      // 1a. Short stub from parent down to elbowY
+      svgLines.appendChild(makeLine(originX, stemStartY, originX, elbowY));
+      // 1b. Horizontal turn near parent row
+      svgLines.appendChild(makeLine(originX, elbowY, nearEdge, elbowY));
+      // 1c. Vertical from near edge down to junctionY
+      svgLines.appendChild(makeLine(nearEdge, elbowY, nearEdge, junctionY));
+    } else {
+      // ── STRAIGHT STEM: parent is above the children's x-range ────────────
+      // 1. Vertical stem: stemStart → junctionY
+      svgLines.appendChild(makeLine(originX, stemStartY, originX, junctionY));
     }
 
-    // Draw elbow from stem to bar if stem is outside the child range
-    if (originX < childBarLeft) {
-      svgLines.appendChild(makeLine(originX, junctionY, childBarLeft, junctionY));
-    } else if (originX > childBarRight) {
-      svgLines.appendChild(makeLine(childBarRight, junctionY, originX, junctionY));
+    // 2. Horizontal junction/sibling bar spanning only the children
+    if (childXs.length > 1) {
+      svgLines.appendChild(makeLine(childBarLeft, junctionY, childBarRight, junctionY));
     }
 
     // 3. Vertical drops: junctionY → top of each child node
@@ -2324,6 +2332,83 @@ function navigateDropdown(e, dropdown, inputEl) {
   if (idx >= 0) { items[idx].classList.add('active'); items[idx].scrollIntoView({ block: 'nearest' }); }
 }
 
+// ── Data Repair ──────────────────────────────────────────────
+/**
+ * Scan every person and enforce bidirectional relationship consistency:
+ *   - Remove references to IDs that don't exist in the people array
+ *   - If A.parents includes B  → B.children must include A  (else remove A.parents entry)
+ *   - If A.children includes B → B.parents must include A   (else remove A.children entry)
+ *   - If A.spouses includes B  → B.spouses must include A   (else remove A.spouses entry)
+ *   - Clean up stale partnerMeta keys that no longer appear in spouses
+ * Saves the cleaned data to Firebase if any changes were made.
+ */
+function repairData() {
+  const idSet = new Set(people.map(p => p.id));
+  let changesMade = 0;
+
+  people.forEach(p => {
+    // ── Remove references to non-existent people ──────────────
+    ['parents', 'children', 'spouses'].forEach(rel => {
+      const before = (p[rel] || []).length;
+      p[rel] = (p[rel] || []).filter(id => idSet.has(id));
+      changesMade += before - p[rel].length;
+    });
+
+    // ── Enforce bidirectional parent ↔ child links ────────────
+    // A.parents includes B → B.children must include A
+    p.parents = (p.parents || []).filter(pid => {
+      const parent = getPerson(pid);
+      if (!parent) return false;
+      if (!(parent.children || []).includes(p.id)) {
+        // Orphaned one-way link: A says B is its parent but B doesn't list A as a child
+        changesMade++;
+        return false; // remove from A's parents
+      }
+      return true;
+    });
+
+    // A.children includes B → B.parents must include A
+    p.children = (p.children || []).filter(cid => {
+      const child = getPerson(cid);
+      if (!child) return false;
+      if (!(child.parents || []).includes(p.id)) {
+        changesMade++;
+        return false; // remove from A's children
+      }
+      return true;
+    });
+
+    // A.spouses includes B → B.spouses must include A
+    p.spouses = (p.spouses || []).filter(sid => {
+      const spouse = getPerson(sid);
+      if (!spouse) return false;
+      if (!(spouse.spouses || []).includes(p.id)) {
+        changesMade++;
+        return false; // remove from A's spouses
+      }
+      return true;
+    });
+
+    // ── Clean stale partnerMeta keys ──────────────────────────
+    if (p.partnerMeta) {
+      const validSpouseIds = new Set(p.spouses.map(String));
+      Object.keys(p.partnerMeta).forEach(key => {
+        if (!validSpouseIds.has(key)) {
+          delete p.partnerMeta[key];
+          changesMade++;
+        }
+      });
+    }
+  });
+
+  if (changesMade > 0) {
+    saveToFirebase();
+    alert(`✅ Data repaired — ${changesMade} stale link(s) removed and saved.`);
+  } else {
+    alert('✅ Data is already clean — no orphaned links found.');
+  }
+}
+
 // ── Import / Export ──────────────────────────────────────────
 function exportData() {
   const data = JSON.stringify({ people, nextId }, null, 2);
@@ -2607,6 +2692,7 @@ function bindEvents() {
     if (file) { importData(file); e.target.value = ''; }
   });
 
+  document.getElementById('repairDataBtn').addEventListener('click', repairData);
   document.getElementById('zoomFit').addEventListener('click', fitToView);
   document.getElementById('glossarySearch').addEventListener('input', e => filterGlossary(e.target.value));
 
