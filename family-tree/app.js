@@ -142,8 +142,12 @@ function switchFamily(familyId) {
   treeRef = firebaseDb.ref(`families/${familyId}`);
   treeRef.on('value', snapshot => {
     const data = snapshot.val();
-    if (data && Array.isArray(data.people)) {
-      people = data.people.map(migratePersonData);
+    if (data && data.people) {
+      // Firebase can return arrays as plain objects with numeric keys — handle both
+      const rawPeople = Array.isArray(data.people)
+        ? data.people
+        : Object.values(data.people);
+      people = rawPeople.filter(Boolean).map(migratePersonData);
       nextId = data.nextId || (Math.max(0, ...people.map(p => p.id)) + 1);
     } else {
       people = [];
