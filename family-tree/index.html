@@ -11,7 +11,14 @@
   <!-- Header -->
   <header>
     <div class="header-inner">
-      <div class="logo">🌳 Family Tree Generator</div>
+      <div class="logo">🌳 Family Tree</div>
+      <!-- Family Selector -->
+      <div class="family-selector-wrap">
+        <select id="familySelect" class="family-select" title="Switch family"></select>
+        <button class="btn btn-icon" id="addFamilyBtn"    title="New Family">＋</button>
+        <button class="btn btn-icon" id="renameFamilyBtn" title="Rename Family">✏</button>
+        <button class="btn btn-icon" id="deleteFamilyBtn" title="Delete Family">🗑</button>
+      </div>
       <nav class="tabs">
         <button class="tab-btn active" data-tab="tree">🌳 Family Tree</button>
         <button class="tab-btn" data-tab="people">👥 People</button>
@@ -443,6 +450,47 @@
             <span class="connect-opt-label">Ex</span>
             <span class="connect-opt-sub">separated</span>
           </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== FAMILY NAME MODAL (create / rename) ===== -->
+  <div class="modal-overlay hidden" id="familyModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3 id="familyModalTitle">New Family</h3>
+        <button class="modal-close" id="familyModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group full">
+          <label for="familyNameInput">Family Name <span class="required">*</span></label>
+          <input type="text" id="familyNameInput" placeholder="e.g. Smith Family" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-right">
+          <button class="btn btn-secondary" id="familyModalCancel">Cancel</button>
+          <button class="btn btn-primary" id="familyModalSave">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== DELETE FAMILY CONFIRM MODAL ===== -->
+  <div class="modal-overlay hidden" id="deleteFamilyModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>🗑 Delete Family</h3>
+        <button class="modal-close" id="deleteFamilyModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to permanently delete <strong id="deleteFamilyName"></strong>?<br/>All people and relationships in this family will be lost.</p>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-right">
+          <button class="btn btn-secondary" id="cancelDeleteFamilyBtn">Cancel</button>
+          <button class="btn btn-danger" id="confirmDeleteFamilyBtn">Yes, Delete Family</button>
         </div>
       </div>
     </div>

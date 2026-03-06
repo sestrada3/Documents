@@ -8,6 +8,14 @@ let nextId  = 1;
 let editingId = null;
 let pendingDeleteId = null;
 
+// ── Family State ─────────────────────────────────────────────
+let familiesList          = []; // [{ id, name }]
+let currentFamilyId       = null;
+let familyIndexRef        = null;
+let firebaseDb            = null;
+let familyModalMode       = null; // 'create' | 'rename'
+let creatingDefaultFamily = false;
+
 // ── Connect Mode ─────────────────────────────────────────────
 let connectMode   = false;
 let connectFromId = null;
@@ -23,24 +31,125 @@ const FIREBASE_CONFIG = {
   appId:             '1:632911162499:web:5c7febd7495b94cf04bfb6',
   measurementId:     'G-E0WZYPLKZ0'
 };
-let treeRef = null; // Firebase Realtime Database reference
+let treeRef = null; // Firebase ref pointing to the currently active family
 
 function initFirebase() {
   firebase.initializeApp(FIREBASE_CONFIG);
-  const db = firebase.database();
-  treeRef = db.ref('familyTree');
+  firebaseDb     = firebase.database();
+  familyIndexRef = firebaseDb.ref('familyIndex');
 
-  // Real-time listener — fires on page load AND whenever any user saves a change
+  // ── Migration: lift old single-family data into the new multi-family structure ──
+  const oldRef = firebaseDb.ref('familyTree');
+  oldRef.once('value', oldSnap => {
+    const oldData = oldSnap.val();
+    if (oldData && Array.isArray(oldData.people) && oldData.people.length > 0) {
+      // Migrate existing data into a named family entry
+      const migKey = 'family-1';
+      const batch  = {};
+      batch[`families/${migKey}/name`]   = 'My Family';
+      batch[`families/${migKey}/people`] = oldData.people;
+      batch[`families/${migKey}/nextId`] = oldData.nextId || 1;
+      batch[`familyIndex/${migKey}`]     = 'My Family';
+      batch['familyTree']               = null; // remove the old path
+      firebaseDb.ref().update(batch)
+        .then(() => startFamilyListener())
+        .catch(() => startFamilyListener());
+    } else {
+      if (oldData) oldRef.remove();
+      startFamilyListener();
+    }
+  });
+}
+
+/** Listen to the lightweight familyIndex and switch to the right family. */
+function startFamilyListener() {
+  familyIndexRef.on('value', snapshot => {
+    const data = snapshot.val() || {};
+    familiesList = Object.entries(data)
+      .map(([id, name]) => ({ id, name: typeof name === 'string' ? name : 'Family' }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    renderFamilySelector();
+
+    if (familiesList.length === 0) {
+      if (!creatingDefaultFamily) {
+        creatingDefaultFamily = true;
+        createFamily('My Family');
+      }
+      return;
+    }
+    creatingDefaultFamily = false;
+
+    if (!currentFamilyId) {
+      // First load — pick last-used family or default to first
+      const savedId = localStorage.getItem('ftCurrentFamily');
+      const target  = familiesList.find(f => f.id === savedId) || familiesList[0];
+      switchFamily(target.id);
+    } else if (!familiesList.find(f => f.id === currentFamilyId)) {
+      // Active family was deleted externally — fall back to first available
+      switchFamily(familiesList[0].id);
+    }
+    // Otherwise just re-render the selector (a rename may have changed a label)
+  });
+}
+
+function saveToFirebase() {
+  if (!treeRef || !currentFamilyId) return;
+  const cur  = familiesList.find(f => f.id === currentFamilyId);
+  const name = cur ? cur.name : 'My Family';
+  treeRef.set({ name, people, nextId }).catch(err => {
+    console.error('Firebase save failed:', err);
+    alert('⚠️ Save failed. Check your internet connection and try again.');
+  });
+}
+
+// ── Family Management ─────────────────────────────────────────
+
+/** Rebuild the <select> dropdown from the current familiesList. */
+function renderFamilySelector() {
+  const sel = document.getElementById('familySelect');
+  if (!sel) return;
+  sel.innerHTML = '';
+  familiesList.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value       = f.id;
+    opt.textContent = f.name;
+    sel.appendChild(opt);
+  });
+  if (currentFamilyId) sel.value = currentFamilyId;
+}
+
+/** Detach old listener, attach a new one for the chosen family. */
+function switchFamily(familyId) {
+  if (familyId === currentFamilyId) return;
+  if (treeRef) { treeRef.off('value'); treeRef = null; }
+
+  currentFamilyId = familyId;
+  localStorage.setItem('ftCurrentFamily', familyId);
+
+  const sel = document.getElementById('familySelect');
+  if (sel) sel.value = familyId;
+
+  // Clear state while new data loads
+  people     = [];
+  nextId     = 1;
+  autoFitted = false;
+  closeDetail();
+  renderTree();
+  renderPeopleGrid();
+
+  // Attach real-time listener to the selected family
+  treeRef = firebaseDb.ref(`families/${familyId}`);
   treeRef.on('value', snapshot => {
     const data = snapshot.val();
     if (data && Array.isArray(data.people)) {
       people = data.people.map(migratePersonData);
-      nextId  = data.nextId || (Math.max(0, ...people.map(p => p.id)) + 1);
+      nextId = data.nextId || (Math.max(0, ...people.map(p => p.id)) + 1);
     } else {
       people = [];
-      nextId  = 1;
+      nextId = 1;
     }
-    autoFitted = false; // allow fit-to-view to run again after new data
+    autoFitted = false;
     renderTree();
     renderPeopleGrid();
   }, err => {
@@ -48,12 +157,98 @@ function initFirebase() {
   });
 }
 
-function saveToFirebase() {
-  if (!treeRef) return;
-  treeRef.set({ people, nextId }).catch(err => {
-    console.error('Firebase save failed:', err);
-    alert('⚠️ Save failed. Check your internet connection and try again.');
+/** Create a brand-new family and switch to it immediately. */
+function createFamily(name) {
+  if (!firebaseDb) return;
+  const newRef = firebaseDb.ref('families').push();
+  const id     = newRef.key;
+  const batch  = {};
+  batch[`families/${id}/name`]   = name;
+  batch[`families/${id}/people`] = [];
+  batch[`families/${id}/nextId`] = 1;
+  batch[`familyIndex/${id}`]     = name;
+  firebaseDb.ref().update(batch)
+    .then(() => switchFamily(id))
+    .catch(err => {
+      console.error('Create family failed:', err);
+      alert('⚠️ Could not create family. Check your connection.');
+    });
+}
+
+/** Rename the currently active family in both familyIndex and families/{id}. */
+function renameCurrentFamily(newName) {
+  if (!currentFamilyId || !firebaseDb) return;
+  const batch = {};
+  batch[`familyIndex/${currentFamilyId}`]   = newName;
+  batch[`families/${currentFamilyId}/name`] = newName;
+  firebaseDb.ref().update(batch).catch(err => {
+    console.error('Rename failed:', err);
+    alert('⚠️ Could not rename family.');
   });
+}
+
+/** Permanently delete the currently active family. */
+function deleteCurrentFamily() {
+  if (!currentFamilyId || !firebaseDb) return;
+  if (familiesList.length <= 1) {
+    alert('You must have at least one family. Create a new family before deleting this one.');
+    return;
+  }
+  const idToDelete = currentFamilyId;
+  const next = familiesList.find(f => f.id !== idToDelete);
+  if (next) switchFamily(next.id);
+  const batch = {};
+  batch[`families/${idToDelete}`]    = null;
+  batch[`familyIndex/${idToDelete}`] = null;
+  firebaseDb.ref().update(batch).catch(err => {
+    console.error('Delete family failed:', err);
+    alert('⚠️ Could not delete family.');
+  });
+}
+
+/** Open the family name modal (create or rename mode). */
+function openFamilyModal(mode) {
+  familyModalMode = mode;
+  const modal = document.getElementById('familyModal');
+  const title = document.getElementById('familyModalTitle');
+  const input = document.getElementById('familyNameInput');
+  if (mode === 'create') {
+    title.textContent = '🌳 New Family';
+    input.value       = '';
+    input.placeholder = 'e.g. Smith Family';
+  } else {
+    title.textContent = '✏ Rename Family';
+    const cur = familiesList.find(f => f.id === currentFamilyId);
+    input.value = cur ? cur.name : '';
+  }
+  input.style.borderColor = '';
+  modal.classList.remove('hidden');
+  setTimeout(() => { input.focus(); input.select(); }, 60);
+}
+
+function closeFamilyModal() {
+  document.getElementById('familyModal').classList.add('hidden');
+  familyModalMode = null;
+}
+
+function saveFamilyModal() {
+  const input = document.getElementById('familyNameInput');
+  const name  = input.value.trim();
+  if (!name) { input.style.borderColor = '#ef4444'; input.focus(); return; }
+  input.style.borderColor = '';
+  if (familyModalMode === 'create') createFamily(name);
+  if (familyModalMode === 'rename') renameCurrentFamily(name);
+  closeFamilyModal();
+}
+
+function openDeleteFamilyModal() {
+  if (familiesList.length <= 1) {
+    alert('You cannot delete the only family. Create another family first.');
+    return;
+  }
+  const cur = familiesList.find(f => f.id === currentFamilyId);
+  document.getElementById('deleteFamilyName').textContent = cur ? cur.name : 'this family';
+  document.getElementById('deleteFamilyModal').classList.remove('hidden');
 }
 
 /** Migrate old single-name format to new firstName/lastName fields */
@@ -1763,13 +1958,13 @@ function drawLines(positions) {
   //      │       ← stem from bottom-centre of parent node
   //    [Child]
   //
-  // The stem always originates at:
-  //   • couple: (midX of parents, barY = node_mid_height)
-  //   • single: (node centre X, node bottom Y)
-  //
-  // junctionY sits halfway between the stem origin and the top of the children.
+  // Uses a two-pass approach to prevent junction bars from different
+  // family groups overlapping at the same Y coordinate:
+  //   Pass 1 — collect all family drawing params
+  //   Pass 2 — detect horizontal conflicts at the same junctionY and offset
+  //   Pass 3 — draw everything with the resolved junctionY values
 
-  // Build a map: sorted-parent-key → { parentIds, childIds }
+  // ── Pass 1: collect ──────────────────────────────────────────
   const familyMap = new Map();
   people.forEach(child => {
     if (!positions.has(child.id)) return;
@@ -1782,63 +1977,87 @@ function drawLines(positions) {
     familyMap.get(key).childIds.push(child.id);
   });
 
+  const familyEntries = [];
   familyMap.forEach(({ parentIds, childIds }) => {
     if (childIds.length === 0) return;
 
     const parentPos = parentIds.map(pid => positions.get(pid));
     const childPos  = childIds.map(cid => positions.get(cid));
 
-    // Centre X between all parents
-    const parentXs = parentPos.map(pp => pp.x + NODE_W / 2);
-    const originX  = Math.round(parentXs.reduce((s, x) => s + x, 0) / parentXs.length);
-
-    // Stem start Y:
-    //  • 2+ parents on the SAME row (married couple): start at the horizontal bar (node mid-height)
-    //  • 2+ parents on DIFFERENT rows (co-parents at different gens): start at bottom of lower parent
-    //  • 1 parent: start at the bottom of the node
-    const sameRow = parentPos.every(pp => pp.y === parentPos[0].y);
+    const parentXs   = parentPos.map(pp => pp.x + NODE_W / 2);
+    const originX    = Math.round(parentXs.reduce((s, x) => s + x, 0) / parentXs.length);
+    const sameRow    = parentPos.every(pp => pp.y === parentPos[0].y);
     const stemStartY = parentIds.length >= 2
       ? (sameRow
-          ? parentPos[0].y + NODE_H / 2                              // couple bar centre (same row)
-          : Math.max(...parentPos.map(pp => pp.y + NODE_H)))         // bottom of lower parent (diff rows)
-      : Math.max(...parentPos.map(pp => pp.y + NODE_H));             // bottom of single parent
+          ? parentPos[0].y + NODE_H / 2
+          : Math.max(...parentPos.map(pp => pp.y + NODE_H)))
+      : Math.max(...parentPos.map(pp => pp.y + NODE_H));
 
-    // junctionY: placed 75% of the way down from stemStart to childTop,
-    // keeping the horizontal bar close to the children and well clear of
-    // any nodes or connector lines on the parent row.
-    const childTopY  = Math.min(...childPos.map(cp => cp.y));
-    const junctionY  = Math.round(stemStartY + (childTopY - stemStartY) * 0.75);
+    const childTopY       = Math.min(...childPos.map(cp => cp.y));
+    const idealJunctionY  = Math.round(stemStartY + (childTopY - stemStartY) * 0.75);
+    const childXs         = childPos.map(cp => cp.x + NODE_W / 2);
+    const childBarLeft    = Math.min(...childXs);
+    const childBarRight   = Math.max(...childXs);
 
-    const childXs      = childPos.map(cp => cp.x + NODE_W / 2);
-    const childBarLeft  = Math.min(...childXs);
-    const childBarRight = Math.max(...childXs);
+    familyEntries.push({
+      parentIds, childIds, parentPos, childPos,
+      originX, stemStartY, childTopY,
+      idealJunctionY,
+      junctionY: idealJunctionY, // will be adjusted in pass 2
+      childXs, childBarLeft, childBarRight
+    });
+  });
 
-    // Does the parent stem land outside the children's x-range?
-    const needsElbow = originX < childBarLeft || originX > childBarRight;
+  // ── Pass 2: stagger junctionY within each inter-generation band ──────────
+  // Families in the same band (same stemStartY + childTopY) would all share
+  // the exact same junctionY.  We spread them across 55%–88% of the available
+  // inter-generation gap so each family's connector bar sits at a clearly
+  // distinct vertical position — roughly 35 px apart for two-family bands at
+  // normal tree spacing, even after zooming out.
+  const bandMap = new Map();
+  familyEntries.forEach(entry => {
+    const bandKey = `${entry.stemStartY},${entry.childTopY}`;
+    if (!bandMap.has(bandKey)) bandMap.set(bandKey, []);
+    bandMap.get(bandKey).push(entry);
+  });
 
-    if (needsElbow) {
-      // ── ELBOW ROUTE: parent is to the left or right of all children ──────
-      // Route the elbow NEAR THE PARENT LEVEL (stemStartY + 15px) so the
-      // horizontal segment stays in the inter-generation gap and never crosses
-      // another family's junction bar down at child level.
-      const elbowY  = stemStartY + 15;
-      const nearEdge = originX < childBarLeft ? childBarLeft : childBarRight;
+  bandMap.forEach(entries => {
+    if (entries.length <= 1) return; // single family — keep idealJunctionY as-is
 
-      // 1a. Short stub from parent down to elbowY
-      svgLines.appendChild(makeLine(originX, stemStartY, originX, elbowY));
-      // 1b. Horizontal turn near parent row
-      svgLines.appendChild(makeLine(originX, elbowY, nearEdge, elbowY));
-      // 1c. Vertical from near edge down to junctionY
-      svgLines.appendChild(makeLine(nearEdge, elbowY, nearEdge, junctionY));
-    } else {
-      // ── STRAIGHT STEM: parent is above the children's x-range ────────────
-      // 1. Vertical stem: stemStart → junctionY
-      svgLines.appendChild(makeLine(originX, stemStartY, originX, junctionY));
-    }
+    const gap = entries[0].childTopY - entries[0].stemStartY;
 
-    // 2. Horizontal junction/sibling bar spanning only the children
-    if (childXs.length > 1) {
-      svgLines.appendChild(makeLine(childBarLeft, junctionY, childBarRight, junctionY));
+    // Sort left-to-right by horizontal midpoint of the child bar
+    entries.sort((a, b) =>
+      (a.childBarLeft + a.childBarRight) / 2 - (b.childBarLeft + b.childBarRight) / 2
+    );
+
+    const N = entries.length;
+    entries.forEach((entry, idx) => {
+      // Spread evenly from 55% to 88% of the gap
+      const ratio = 0.55 + (0.33 * idx / (N - 1));
+      entry.junctionY = Math.round(entry.stemStartY + ratio * gap);
+    });
+  });
+
+  // ── Pass 3: draw ─────────────────────────────────────────────
+  // Every family uses a straight vertical stem from the parent down to
+  // junctionY. The horizontal bar is then extended left or right to include
+  // the parent's stem position when the parent sits outside the children's
+  // x-range (replaces the old "elbow near parent" route which produced long,
+  // confusing horizontal sweeps just below the parent generation row).
+  familyEntries.forEach(entry => {
+    const { originX, stemStartY, junctionY, childXs, childBarLeft, childBarRight, childPos } = entry;
+
+    // 1. Straight vertical stem: parent bottom → junctionY
+    svgLines.appendChild(makeLine(originX, stemStartY, originX, junctionY));
+
+    // 2. Horizontal bar spanning min(originX, childBarLeft) → max(originX, childBarRight)
+    //    This naturally extends the bar to include the parent when it is
+    //    offset left or right of its children.
+    const barLeft  = Math.min(originX, childBarLeft);
+    const barRight = Math.max(originX, childBarRight);
+    if (barLeft < barRight) {
+      svgLines.appendChild(makeLine(barLeft, junctionY, barRight, junctionY));
     }
 
     // 3. Vertical drops: junctionY → top of each child node
@@ -2411,11 +2630,13 @@ function repairData() {
 
 // ── Import / Export ──────────────────────────────────────────
 function exportData() {
-  const data = JSON.stringify({ people, nextId }, null, 2);
-  const blob = new Blob([data], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url; a.download = 'family-tree.json'; a.click();
+  const cur      = familiesList.find(f => f.id === currentFamilyId);
+  const safeName = (cur?.name || 'family-tree').replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  const data     = JSON.stringify({ people, nextId }, null, 2);
+  const blob     = new Blob([data], { type: 'application/json' });
+  const url      = URL.createObjectURL(blob);
+  const a        = document.createElement('a');
+  a.href = url; a.download = `${safeName}.json`; a.click();
   URL.revokeObjectURL(url);
 }
 
@@ -2673,6 +2894,10 @@ function bindEvents() {
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
+      const fm = document.getElementById('familyModal');
+      const dfm = document.getElementById('deleteFamilyModal');
+      if (fm  && !fm.classList.contains('hidden'))  { closeFamilyModal(); return; }
+      if (dfm && !dfm.classList.contains('hidden')) { dfm.classList.add('hidden'); return; }
       if (!quickAddModal.classList.contains('hidden')) { closeQuickAdd(); return; }
       if (!personModal.classList.contains('hidden'))   { closeModal(); return; }
       if (!deleteModal.classList.contains('hidden'))   { deleteModal.classList.add('hidden'); return; }
@@ -2719,6 +2944,39 @@ function bindEvents() {
         toggleConnectMode();
       }
     }
+  });
+
+  // ── Family management ─────────────────────────────────────
+  document.getElementById('familySelect').addEventListener('change', e => switchFamily(e.target.value));
+  document.getElementById('addFamilyBtn').addEventListener('click', () => openFamilyModal('create'));
+  document.getElementById('renameFamilyBtn').addEventListener('click', () => openFamilyModal('rename'));
+  document.getElementById('deleteFamilyBtn').addEventListener('click', openDeleteFamilyModal);
+
+  // Family name modal
+  document.getElementById('familyModalClose').addEventListener('click', closeFamilyModal);
+  document.getElementById('familyModalCancel').addEventListener('click', closeFamilyModal);
+  document.getElementById('familyModalSave').addEventListener('click', saveFamilyModal);
+  document.getElementById('familyModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('familyModal')) closeFamilyModal();
+  });
+  document.getElementById('familyNameInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveFamilyModal();
+  });
+
+  // Delete family confirm modal
+  document.getElementById('deleteFamilyModalClose').addEventListener('click', () =>
+    document.getElementById('deleteFamilyModal').classList.add('hidden')
+  );
+  document.getElementById('cancelDeleteFamilyBtn').addEventListener('click', () =>
+    document.getElementById('deleteFamilyModal').classList.add('hidden')
+  );
+  document.getElementById('confirmDeleteFamilyBtn').addEventListener('click', () => {
+    document.getElementById('deleteFamilyModal').classList.add('hidden');
+    deleteCurrentFamily();
+  });
+  document.getElementById('deleteFamilyModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('deleteFamilyModal'))
+      document.getElementById('deleteFamilyModal').classList.add('hidden');
   });
 }
 
