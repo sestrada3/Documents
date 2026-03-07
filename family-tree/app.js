@@ -1724,6 +1724,24 @@ function layoutTree() {
     });
   });
 
+  // ── Step 8: Post-layout overlap correction ───────────────────
+  // Sweep each generation row left-to-right and push any node that
+  // would overlap the previous one rightward until there's enough gap.
+  const byYMap = new Map();
+  positions.forEach((pos, id) => {
+    if (!byYMap.has(pos.y)) byYMap.set(pos.y, []);
+    byYMap.get(pos.y).push({ id, pos });
+  });
+  byYMap.forEach(nodes => {
+    nodes.sort((a, b) => a.pos.x - b.pos.x);
+    for (let i = 1; i < nodes.length; i++) {
+      const prev = nodes[i - 1].pos;
+      const curr = nodes[i].pos;
+      const minX = prev.x + NODE_W + H_GAP;
+      if (curr.x < minX) curr.x = minX;
+    }
+  });
+
   return positions;
 }
 
@@ -1809,6 +1827,53 @@ function drawLines(positions) {
     el.textContent = text;
     return el;
   };
+
+  // ── STEP 0: Family group background boxes ────────────────────
+  // Draw a soft rounded rect behind each nuclear family unit
+  // (parents + their children) so groups are visually distinct.
+  const BOX_PAD  = 18;
+  const BOX_R    = 14;
+  const drawnBox = new Set();
+  people.forEach(p => {
+    if (!positions.has(p.id)) return;
+    if (!(p.children || []).length) return;
+    const childPosArr = (p.children || []).map(cid => positions.get(cid)).filter(Boolean);
+    if (!childPosArr.length) return;
+
+    // Gather all members: this person + spouses on same row + children
+    const memberPositions = [positions.get(p.id)];
+    (p.spouses || []).forEach(sid => {
+      const sp = positions.get(sid);
+      if (sp && sp.y === positions.get(p.id).y) memberPositions.push(sp);
+    });
+    childPosArr.forEach(cp => memberPositions.push(cp));
+
+    // Deduplicate box by sorted member IDs
+    const memberIds = memberPositions.map((_, i) => i).join('-');
+    const boxKey = memberPositions.map(mp => `${mp.x},${mp.y}`).sort().join('|');
+    if (drawnBox.has(boxKey)) return;
+    drawnBox.add(boxKey);
+
+    const xs = memberPositions.map(mp => mp.x);
+    const ys = memberPositions.map(mp => mp.y);
+    const x1 = Math.min(...xs) - BOX_PAD;
+    const y1 = Math.min(...ys) - BOX_PAD;
+    const x2 = Math.max(...xs) + NODE_W + BOX_PAD;
+    const y2 = Math.max(...ys) + NODE_H + BOX_PAD;
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x1);
+    rect.setAttribute('y', y1);
+    rect.setAttribute('width',  x2 - x1);
+    rect.setAttribute('height', y2 - y1);
+    rect.setAttribute('rx', BOX_R);
+    rect.setAttribute('ry', BOX_R);
+    rect.setAttribute('fill', 'rgba(241,245,249,0.55)');
+    rect.setAttribute('stroke', '#cbd5e1');
+    rect.setAttribute('stroke-width', '1.5');
+    rect.setAttribute('stroke-dasharray', '5,4');
+    svgLines.insertBefore(rect, svgLines.firstChild); // draw behind everything else
+  });
 
   // ── STEP 1: Spouse / Partner connector ───────────────────────
   //   Married  → double lines + ♥  (pink)
