@@ -1358,387 +1358,178 @@ function renderPeopleGrid() {
 function layoutTree() {
   if (people.length === 0) return new Map();
 
-  const genMap  = new Map();
+  // ── Phase 1: Assign generation depths ───────────────────────
+  const genMap      = new Map();
   const isolatedIds = new Set();
 
-  // ── Step 1: BFS from roots (people with no parents) ──────
-  const roots   = people.filter(p => !p.parents || p.parents.length === 0);
-  const queue   = roots.map(r => ({ id: r.id, gen: 0 }));
-  const visited = new Set();
-
-  while (queue.length > 0) {
-    const { id, gen } = queue.shift();
-    if (visited.has(id)) {
-      if (gen > genMap.get(id)) genMap.set(id, gen);
-      continue;
-    }
-    visited.add(id);
-    genMap.set(id, gen);
+  // BFS from roots
+  const roots = people.filter(p => !p.parents || p.parents.length === 0);
+  const bfsQ  = roots.map(r => ({ id: r.id, gen: 0 }));
+  const bfsV  = new Set();
+  while (bfsQ.length) {
+    const { id, gen } = bfsQ.shift();
+    if (bfsV.has(id)) { if (gen > genMap.get(id)) genMap.set(id, gen); continue; }
+    bfsV.add(id); genMap.set(id, gen);
     const p = getPerson(id);
-    if (p && p.children) p.children.forEach(cid => queue.push({ id: cid, gen: gen + 1 }));
-    if (p && p.spouses)  p.spouses.forEach(sid => { if (!visited.has(sid)) queue.push({ id: sid, gen }); });
+    if (p && p.children) p.children.forEach(cid => bfsQ.push({ id: cid, gen: gen + 1 }));
+    if (p && p.spouses)  p.spouses.forEach(sid => { if (!bfsV.has(sid)) bfsQ.push({ id: sid, gen }); });
   }
-
-  // ── Step 2: Infer generation for unvisited people ────────
-  // Repeatedly scan reverse-relationships until stable
-  let changed = true;
-  while (changed) {
-    changed = false;
+  // Infer gen for unvisited
+  let inferChg = true;
+  while (inferChg) {
+    inferChg = false;
     people.forEach(p => {
       if (genMap.has(p.id)) return;
-      let inferredGen = null;
-
-      // Check p's own relationship arrays for already-placed anchors
-      (p.parents || []).forEach(pid => {
-        if (genMap.has(pid)) {
-          const cand = genMap.get(pid) + 1;
-          if (inferredGen === null || cand > inferredGen) inferredGen = cand;
-        }
-      });
-      (p.children || []).forEach(cid => {
-        if (genMap.has(cid)) {
-          const cand = genMap.get(cid) - 1;
-          if (inferredGen === null || cand < inferredGen) inferredGen = cand;
-        }
-      });
-      (p.spouses || []).forEach(sid => {
-        if (genMap.has(sid) && inferredGen === null) inferredGen = genMap.get(sid);
-      });
-
-      // Also scan reverse: other people who reference p
-      if (inferredGen === null) {
-        people.forEach(other => {
-          if (!genMap.has(other.id)) return;
-          const og = genMap.get(other.id);
-          if ((other.parents   || []).includes(p.id) && inferredGen === null) inferredGen = og - 1;
-          if ((other.children  || []).includes(p.id) && inferredGen === null) inferredGen = og + 1;
-          if ((other.spouses   || []).includes(p.id) && inferredGen === null) inferredGen = og;
-        });
-      }
-
-      if (inferredGen !== null) {
-        genMap.set(p.id, inferredGen);
-        changed = true;
-      }
+      let g = null;
+      (p.parents||[]).forEach(pid => { if (genMap.has(pid)) { const c=genMap.get(pid)+1; if(g===null||c>g) g=c; }});
+      (p.children||[]).forEach(cid => { if (genMap.has(cid)) { const c=genMap.get(cid)-1; if(g===null||c<g) g=c; }});
+      (p.spouses||[]).forEach(sid => { if (genMap.has(sid)&&g===null) g=genMap.get(sid); });
+      if (g===null) people.forEach(o => { if(!genMap.has(o.id)) return; const og=genMap.get(o.id);
+        if((o.parents||[]).includes(p.id)&&g===null) g=og-1;
+        if((o.children||[]).includes(p.id)&&g===null) g=og+1;
+        if((o.spouses||[]).includes(p.id)&&g===null) g=og; });
+      if (g!==null) { genMap.set(p.id,g); inferChg=true; }
     });
   }
+  // Adjust misplaced roots
+  let adjMade = true;
+  while (adjMade) { adjMade=false; people.forEach(p => {
+    if ((p.parents||[]).length>0||!genMap.has(p.id)) return;
+    const cgs=(p.children||[]).map(c=>genMap.get(c)).filter(g=>g!==undefined);
+    if (!cgs.length) return;
+    const exp=Math.min(...cgs)-1;
+    if (exp>genMap.get(p.id)) { genMap.set(p.id,exp); adjMade=true; }
+  }); }
+  // Enforce parent<child and spouse alignment
+  let enf=true;
+  while(enf) { enf=false; people.forEach(p => {
+    if (!genMap.has(p.id)) return;
+    const pg=genMap.get(p.id);
+    (p.children||[]).forEach(cid => { if(!genMap.has(cid)) return; if(genMap.get(cid)<pg+1){genMap.set(cid,pg+1);enf=true;} });
+    (p.spouses||[]).forEach(sid => { if(!genMap.has(sid)) return;
+      const mx=Math.max(pg,genMap.get(sid));
+      if(genMap.get(p.id)!==mx){genMap.set(p.id,mx);enf=true;}
+      if(genMap.get(sid)!==mx){genMap.set(sid,mx);enf=true;} });
+  }); }
+  // Mark isolated, normalize
+  people.forEach(p => { if(!genMap.has(p.id)){
+    const h=(p.parents||[]).length>0||(p.spouses||[]).length>0||(p.children||[]).length>0;
+    genMap.set(p.id,0); if(!h) isolatedIds.add(p.id); }});
+  const minGen=Math.min(...genMap.values());
+  if (minGen!==0) genMap.forEach((g,id)=>genMap.set(id,g-minGen));
 
-  // ── Step 2.5: Adjust misplaced root nodes ───────────────
-  // Roots (no parents in system) are placed at gen 0 by BFS before their
-  // children's true generation is known. If a root's children end up at
-  // gen N > 1, the root should be at gen N-1, not gen 0.
-  // Example: Lenox has no parents, but his daughter Sasha is gen 2 because
-  // Sasha has another parent descended from Oscar/Evangeline (gen 0→1→Sasha).
-  // So Lenox should be gen 1, not gen 0.
-  let adjustMade = true;
-  while (adjustMade) {
-    adjustMade = false;
-    people.forEach(p => {
-      // Only adjust people who have no parents recorded (true roots)
-      if ((p.parents || []).length > 0) return;
-      if (!genMap.has(p.id)) return;
-      const childGens = (p.children || [])
-        .map(cid => genMap.get(cid))
-        .filter(g => g !== undefined);
-      if (childGens.length === 0) return;
-      const expectedGen = Math.min(...childGens) - 1;
-      // Only move DOWN (increase gen number) — never up
-      if (expectedGen > genMap.get(p.id)) {
-        genMap.set(p.id, expectedGen);
-        adjustMade = true;
-      }
-    });
-  }
-
-  // ── Step 2.7: Constraint enforcement ────────────────────────
-  // BFS + barycenter inference can place a parent and child on the same
-  // generation row when the child was visited first via a spouse edge
-  // (e.g. Oscar reached gen 0 through Evangeline before Avelino could
-  // push him to gen 1 as his child).
-  //
-  // Iterate until stable:
-  //   Rule 1 — child gen must be >= parent gen + 1  (push child DOWN if violated)
-  //   Rule 2 — spouses must share the same gen      (level up to the higher of the two)
-  let enforceChanged = true;
-  while (enforceChanged) {
-    enforceChanged = false;
-
-    // Rule 1: push children below their parents
-    people.forEach(p => {
-      if (!genMap.has(p.id)) return;
-      const pGen = genMap.get(p.id);
-      (p.children || []).forEach(cid => {
-        if (!genMap.has(cid)) return;
-        const required = pGen + 1;
-        if (genMap.get(cid) < required) {
-          genMap.set(cid, required);
-          enforceChanged = true;
-        }
-      });
-    });
-
-    // Rule 2: level spouses to the same generation (take the max so nobody moves up past a parent)
-    people.forEach(p => {
-      if (!genMap.has(p.id)) return;
-      (p.spouses || []).forEach(sid => {
-        if (!genMap.has(sid)) return;
-        const pGen = genMap.get(p.id);
-        const sGen = genMap.get(sid);
-        if (pGen !== sGen) {
-          const maxGen = Math.max(pGen, sGen);
-          if (genMap.get(p.id) !== maxGen) { genMap.set(p.id, maxGen); enforceChanged = true; }
-          if (genMap.get(sid) !== maxGen)  { genMap.set(sid,  maxGen); enforceChanged = true; }
-        }
-      });
-    });
-  }
-
-  // ── Step 3: Mark truly isolated nodes (no relationships) ─
-  people.forEach(p => {
-    if (!genMap.has(p.id)) {
-      const hasAnyRel = (p.parents  || []).length > 0 ||
-                        (p.spouses  || []).length > 0 ||
-                        (p.children || []).length > 0;
-      genMap.set(p.id, 0);
-      if (!hasAnyRel) isolatedIds.add(p.id);
-    }
-  });
-
-  // ── Step 4: Normalize generations so minimum = 0 ─────────
-  const minGen = Math.min(...genMap.values());
-  if (minGen !== 0) {
-    genMap.forEach((gen, id) => genMap.set(id, gen - minGen));
-  }
-
-  // ── Step 5: Group by generation ──────────────────────────
-  const byGen = new Map();
-  genMap.forEach((gen, id) => {
-    if (!byGen.has(gen)) byGen.set(gen, []);
-    byGen.get(gen).push(id);
-  });
-
-  // ── Step 6: Smart column ordering — barycenter method ────────
-  // Pulls parents above their children and children below their parents,
-  // including non-spouse parents. Then enforces spouse adjacency.
-  const genNums = [...byGen.keys()].sort((a, b) => a - b);
-
-  // Run 3 full sweeps (top-down + bottom-up) to converge on good positions
-  for (let sweep = 0; sweep < 3; sweep++) {
-
-    // Top-down pass: sort gen N by average column index of its children in gen N+1
-    genNums.forEach(gen => {
-      const nextGen = gen + 1;
-      if (!byGen.has(nextGen)) return;
-      const ids     = [...byGen.get(gen)];
-      const nextIds = byGen.get(nextGen);
-
-      ids.sort((a, b) => {
-        const childrenInNext = id => (getPerson(id)?.children || []).filter(c => nextIds.includes(c));
-        const avg = id => {
-          const ch = childrenInNext(id);
-          return ch.length ? ch.reduce((s, c) => s + nextIds.indexOf(c), 0) / ch.length : null;
-        };
-        const pa = avg(a), pb = avg(b);
-        if (pa === null && pb === null) return 0;
-        if (pa === null) return 1;   // push no-child nodes to the right
-        if (pb === null) return -1;
-        return pa - pb;
-      });
-      byGen.set(gen, ids);
-    });
-
-    // Bottom-up pass: sort gen N by average column index of its parents in gen N-1
-    [...genNums].reverse().forEach(gen => {
-      const prevGen = gen - 1;
-      if (!byGen.has(prevGen)) return;
-      const ids     = [...byGen.get(gen)];
-      const prevIds = byGen.get(prevGen);
-
-      ids.sort((a, b) => {
-        const parentsInPrev = id => (getPerson(id)?.parents || []).filter(p => prevIds.includes(p));
-        const avg = id => {
-          const prs = parentsInPrev(id);
-          return prs.length ? prs.reduce((s, p) => s + prevIds.indexOf(p), 0) / prs.length : null;
-        };
-        const pa = avg(a), pb = avg(b);
-        if (pa === null && pb === null) return 0;
-        if (pa === null) return 1;
-        if (pb === null) return -1;
-        return pa - pb;
-      });
-      byGen.set(gen, ids);
-    });
-  }
-
-  // Adjacency pass — keep spouses AND co-parents (share a child) side-by-side
-  byGen.forEach((ids, gen) => {
-    const ordered = [];
-    const placed  = new Set();
-    ids.forEach(id => {
-      if (placed.has(id)) return;
-      placed.add(id);
-      ordered.push(id);
-      const p = getPerson(id);
-      // 1. Keep spouses adjacent
-      if (p && p.spouses) {
-        p.spouses.forEach(sid => {
-          if (ids.includes(sid) && !placed.has(sid)) { placed.add(sid); ordered.push(sid); }
-        });
-      }
-      // 2. Keep co-parents adjacent — two people who share a child but aren't spouses
-      //    e.g. Lenox and Sasha are both parents of Mallory → place them next to each other
-      if (p && p.children) {
-        p.children.forEach(cid => {
-          const child = getPerson(cid);
-          if (!child) return;
-          (child.parents || []).forEach(coParentId => {
-            if (coParentId === id) return; // skip self
-            if (ids.includes(coParentId) && !placed.has(coParentId)) {
-              placed.add(coParentId);
-              ordered.push(coParentId);
-            }
-          });
-        });
-      }
-    });
-    byGen.set(gen, ordered);
-  });
-
-  // ── Step 7: Calculate pixel positions (family-centred, generation by generation) ──
-  // Each generation is laid out family-group by family-group, with every group
-  // centred directly below its parents' midpoint.  This guarantees that John's
-  // kids, Phaedra's kid, and Sasha+Lenox's kid never interleave in the same row,
-  // and that connector bars can't visually span across unrelated children.
-  const positions  = new Map();
+  // ── Phase 2: Bottom-up subtree-width layout ──────────────────
+  // Each person's subtree width = max(NODE_W, sum of children subtrees + gaps).
+  // Parents are centered above their children.
+  // Sibling branches are separated by BRANCH_GAP.
   const PADDING_TOP  = 60;
   const PADDING_LEFT = 60;
-  const FAMILY_GAP   = H_GAP; // extra gap inserted between adjacent family groups
+  const BRANCH_GAP   = H_GAP * 2; // extra gap between unrelated branches
 
-  const genNums2 = [...byGen.keys()].sort((a, b) => a - b);
+  const positions = new Map();
+  const swCache   = new Map(); // subtree-width cache
 
-  genNums2.forEach(gen => {
-    const ids = byGen.get(gen);
+  // Subtree width for one person (inclusive of all their descendants)
+  function subtreeW(id) {
+    if (swCache.has(id)) return swCache.get(id);
+    const p = getPerson(id);
+    const children = (p?.children||[]).filter(cid => genMap.has(cid));
+    if (!children.length) { swCache.set(id, NODE_W); return NODE_W; }
+    const total = children.reduce((s,cid)=>s+subtreeW(cid),0) + (children.length-1)*H_GAP;
+    const w = Math.max(NODE_W, total);
+    swCache.set(id, w);
+    return w;
+  }
+
+  // Place person id and all their descendants, starting at leftX.
+  // Returns the rightmost x used.
+  const placed = new Set();
+  function placeSubtree(id, leftX) {
+    if (placed.has(id)) return leftX + subtreeW(id);
+    placed.add(id);
+    const p   = getPerson(id);
+    const gen = genMap.get(id) || 0;
     const y   = PADDING_TOP + gen * (NODE_H + V_GAP);
 
-    if (gen === 0) {
-      // Root generation — simple even distribution left-to-right
-      ids.forEach((id, col) => {
-        positions.set(id, {
-          gen, col, x: PADDING_LEFT + col * (NODE_W + H_GAP), y,
-          isolated: isolatedIds.has(id)
-        });
-      });
-      return;
-    }
+    // All children not yet placed
+    const children = (p?.children||[]).filter(cid => genMap.has(cid) && !placed.has(cid));
 
-    // Build family groups using already-calculated parent positions
-    const familyGroupMap = new Map(); // parentKey → { posParentIds, childIds[] }
-    ids.forEach(id => {
-      const p = getPerson(id);
-      const posParentIds = (p?.parents || [])
-        .filter(pid => positions.has(pid))
-        .sort((a, b) => a - b);
-      const key = posParentIds.join(',') || '__unparented__';
-      if (!familyGroupMap.has(key)) {
-        familyGroupMap.set(key, { posParentIds, childIds: [] });
-      }
-      familyGroupMap.get(key).childIds.push(id);
-    });
+    let personX = leftX;
 
-    // ── Co-parent merging ──────────────────────────────────────
-    // An unparented person (e.g. Lenox) who co-parents a child with
-    // someone already in a positioned family group (e.g. Sasha) should
-    // be inserted RIGHT NEXT TO that co-parent, not floated off alone.
-    // This ensures Mallory is centred under both Sasha and Lenox.
-    if (familyGroupMap.has('__unparented__')) {
-      const unparentedGroup = familyGroupMap.get('__unparented__');
-      const remaining = [];
-      unparentedGroup.childIds.forEach(unpId => {
-        const unpPerson = getPerson(unpId);
-        let merged = false;
-        if (unpPerson) {
-          const unpChildSet = new Set(unpPerson.children || []);
-          for (const [key, group] of familyGroupMap.entries()) {
-            if (key === '__unparented__' || merged) continue;
-            for (let gi = 0; gi < group.childIds.length; gi++) {
-              if (merged) break;
-              const gPerson = getPerson(group.childIds[gi]);
-              if (!gPerson) continue;
-              // Check if they share a child
-              const sharesChild = (gPerson.children || []).some(cid => unpChildSet.has(cid));
-              if (sharesChild) {
-                group.childIds.splice(gi + 1, 0, unpId); // insert right after co-parent
-                merged = true;
-              }
-            }
-          }
-        }
-        if (!merged) remaining.push(unpId);
+    if (children.length > 0) {
+      // Width needed for children
+      const childrenW = children.reduce((s,cid)=>s+subtreeW(cid),0) + (children.length-1)*H_GAP;
+      const myW = subtreeW(id);
+      // Start children so the group is centered under the wider of (me, children)
+      let cx = leftX + Math.max(0, Math.round((myW - childrenW) / 2));
+      children.forEach(cid => {
+        placeSubtree(cid, cx);
+        cx += subtreeW(cid) + H_GAP;
       });
-      if (remaining.length === 0) {
-        familyGroupMap.delete('__unparented__');
-      } else {
-        unparentedGroup.childIds = remaining;
+      // Center self above placed children
+      const childXs = children.map(cid => positions.get(cid)).filter(Boolean);
+      if (childXs.length) {
+        const cl = Math.min(...childXs.map(cp=>cp.x));
+        const cr = Math.max(...childXs.map(cp=>cp.x+NODE_W));
+        personX = Math.max(leftX, Math.round((cl+cr)/2 - NODE_W/2));
       }
     }
 
-    // Sort groups left-to-right by average parent X, then preserve barycenter order within each
-    const groups = [...familyGroupMap.values()]
-      .map(group => {
-        let avgParentX = null;
-        if (group.posParentIds.length > 0) {
-          const xs = group.posParentIds
-            .map(pid => positions.get(pid))
-            .filter(Boolean)
-            .map(pp => pp.x + NODE_W / 2);
-          if (xs.length) avgParentX = xs.reduce((s, x) => s + x, 0) / xs.length;
-        }
-        // Keep barycenter order within the group
-        group.childIds.sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
-        return { ...group, avgParentX };
-      })
-      .sort((a, b) => (a.avgParentX ?? Infinity) - (b.avgParentX ?? Infinity));
+    positions.set(id, { x: personX, y, gen, isolated: isolatedIds.has(id) });
 
-    // Place each group centred under its parents; push right if it would overlap the previous group
-    let cursorX = PADDING_LEFT;
-    groups.forEach(group => {
-      const nKids  = group.childIds.length;
-      const groupW = nKids * (NODE_W + H_GAP) - H_GAP;
-
-      let startX = cursorX;
-      if (group.avgParentX !== null) {
-        startX = Math.round(group.avgParentX - groupW / 2);
-      }
-      startX = Math.max(startX, cursorX);
-      startX = Math.max(startX, PADDING_LEFT);
-
-      group.childIds.forEach((id, ci) => {
-        positions.set(id, {
-          gen, col: ci,
-          x: startX + ci * (NODE_W + H_GAP), y,
-          isolated: isolatedIds.has(id)
-        });
+    // Place spouse immediately to the right
+    (p?.spouses||[]).forEach(sid => {
+      if (placed.has(sid) || genMap.get(sid) !== gen) return;
+      placed.add(sid);
+      positions.set(sid, { x: personX + NODE_W + H_GAP, y, gen, isolated: isolatedIds.has(sid) });
+      // Place spouse's own children too (if not already placed)
+      const sp = getPerson(sid);
+      (sp?.children||[]).filter(cid=>genMap.has(cid)&&!placed.has(cid)).forEach(cid => {
+        placeSubtree(cid, positions.get(sid).x);
       });
-
-      cursorX = startX + groupW + H_GAP + FAMILY_GAP;
     });
+
+    return leftX + subtreeW(id);
+  }
+
+  // Find top-level "branch leaders": gen-0 people with no parents in the tree,
+  // deduplicated so each couple is counted once (keep the one listed first).
+  const gen0 = [...genMap.entries()].filter(([,g])=>g===0).map(([id])=>id);
+  const branchSeen = new Set();
+  const branchLeaders = [];
+  gen0.forEach(id => {
+    if (branchSeen.has(id)) return;
+    branchSeen.add(id);
+    const p = getPerson(id);
+    // Mark spouse as secondary so we don't start a duplicate branch from them
+    (p?.spouses||[]).forEach(sid => { if (gen0.includes(sid)) branchSeen.add(sid); });
+    branchLeaders.push(id);
   });
 
-  // ── Step 8: Post-layout overlap correction ───────────────────
-  // Sweep each generation row left-to-right and push any node that
-  // would overlap the previous one rightward until there's enough gap.
-  const byYMap = new Map();
-  positions.forEach((pos, id) => {
-    if (!byYMap.has(pos.y)) byYMap.set(pos.y, []);
-    byYMap.get(pos.y).push({ id, pos });
+  // Place each root branch left to right with BRANCH_GAP between them
+  let cursorX = PADDING_LEFT;
+  branchLeaders.forEach(id => {
+    const right = placeSubtree(id, cursorX);
+    cursorX = Math.max(right, cursorX + subtreeW(id)) + BRANCH_GAP;
   });
-  byYMap.forEach(nodes => {
-    nodes.sort((a, b) => a.pos.x - b.pos.x);
-    for (let i = 1; i < nodes.length; i++) {
-      const prev = nodes[i - 1].pos;
-      const curr = nodes[i].pos;
-      const minX = prev.x + NODE_W + H_GAP;
-      if (curr.x < minX) curr.x = minX;
+
+  // Place any remaining unplaced people (edge cases / orphans)
+  people.forEach(p => {
+    if (!placed.has(p.id)) {
+      const gen = genMap.get(p.id) || 0;
+      positions.set(p.id, { x: cursorX, y: PADDING_TOP + gen*(NODE_H+V_GAP), gen, isolated: isolatedIds.has(p.id) });
+      cursorX += NODE_W + H_GAP;
+    }
+  });
+
+  // Final overlap sweep: push any crowded nodes right
+  const byY = new Map();
+  positions.forEach(pos => { if(!byY.has(pos.y)) byY.set(pos.y,[]); byY.get(pos.y).push(pos); });
+  byY.forEach(nodes => {
+    nodes.sort((a,b)=>a.x-b.x);
+    for (let i=1;i<nodes.length;i++) {
+      const p=nodes[i-1], c=nodes[i];
+      if (c.x < p.x+NODE_W+H_GAP) c.x = p.x+NODE_W+H_GAP;
     }
   });
 
