@@ -1742,6 +1742,62 @@ function layoutTree() {
     }
   });
 
+  // ── Step 9: Re-center each generation above its children (bottom-up) ──
+  // The top-down pass centers children under parents. This pass does the
+  // reverse: sweeps from the deepest generation upward so every parent
+  // group ends up centered above the mid-point of its children.
+  // Spouse groups are moved as a unit to stay adjacent.
+  {
+    const sortedDesc = [...byGen.keys()].sort((a, b) => b - a); // highest gen first
+    sortedDesc.forEach(gen => {
+      const genIds = byGen.get(gen);
+
+      // Build spouse groups for this generation
+      const done   = new Set();
+      const groups = [];
+      genIds.forEach(id => {
+        if (done.has(id)) return;
+        done.add(id);
+        const grp = [id];
+        const p   = getPerson(id);
+        (p?.spouses || []).forEach(sid => {
+          if (genIds.includes(sid) && !done.has(sid)) { done.add(sid); grp.push(sid); }
+        });
+        groups.push(grp);
+      });
+
+      // Re-center each group above the mid-point of all its children
+      groups.forEach(grp => {
+        const childMids = [];
+        grp.forEach(id => {
+          const p = getPerson(id);
+          (p?.children || []).forEach(cid => {
+            const cp = positions.get(cid);
+            if (cp) childMids.push(cp.x + NODE_W / 2);
+          });
+        });
+        if (childMids.length === 0) return; // no positioned children – don't move
+        const midChild = (Math.min(...childMids) + Math.max(...childMids)) / 2;
+        const grpW     = grp.length * NODE_W + (grp.length - 1) * H_GAP;
+        const newStart = Math.round(midChild - grpW / 2);
+        grp.forEach((id, i) => {
+          const pos = positions.get(id);
+          if (pos) pos.x = newStart + i * (NODE_W + H_GAP);
+        });
+      });
+
+      // Re-apply overlap correction left-to-right for this row
+      const rowNodes = genIds.map(id => ({ pos: positions.get(id) })).filter(n => n.pos);
+      rowNodes.sort((a, b) => a.pos.x - b.pos.x);
+      for (let i = 1; i < rowNodes.length; i++) {
+        const prev = rowNodes[i - 1].pos;
+        const curr = rowNodes[i].pos;
+        const minX = prev.x + NODE_W + H_GAP;
+        if (curr.x < minX) curr.x = minX;
+      }
+    });
+  }
+
   return positions;
 }
 
