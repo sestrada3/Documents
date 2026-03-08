@@ -1833,17 +1833,17 @@ function layoutTree() {
 
       // ── Group-level overlap correction (all generations) ─────────────
       // After centering, groups may overlap.  Push them apart as whole
-      // units sorted left-to-right so no individual node cards touch.
-      // Operating on whole groups (not individual nodes) preserves family
-      // groupings — e.g. Napoleon shifts right as a unit rather than
-      // slipping between Arlan and John Manas.
-      const sortedGroups = [...groups].sort((a, b) => {
-        const lx = grp => Math.min(...grp.map(id => positions.get(id)?.x ?? Infinity));
-        return lx(a) - lx(b);
-      });
-      for (let i = 1; i < sortedGroups.length; i++) {
-        const prevGrp = sortedGroups[i - 1];
-        const currGrp = sortedGroups[i];
+      // units to prevent individual node cards from touching.
+      //
+      // IMPORTANT: we use the ORIGINAL groups[] order (barycenter / Step-7
+      // family order), NOT a re-sort by current x.  Re-sorting by x can
+      // flip the order of two same-gen groups that end up at nearly the
+      // same position after centering (e.g. Napoleon and John Manas both
+      // near x=1620), causing the wrong group to be pushed right and
+      // leaving Napoleon stranded between Adelina's children.
+      for (let i = 1; i < groups.length; i++) {
+        const prevGrp = groups[i - 1];
+        const currGrp = groups[i];
         const prevRight = Math.max(...prevGrp.map(id => (positions.get(id)?.x ?? 0) + NODE_W));
         const currLeft  = Math.min(...currGrp.map(id => positions.get(id)?.x ?? Infinity));
         const shift = prevRight + H_GAP - currLeft;
