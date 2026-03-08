@@ -1742,33 +1742,30 @@ function layoutTree() {
     }
   });
 
-  // ── Step 9: Re-center each generation above its children (bottom-up) ──
-  // The top-down pass centers children under parents. This pass does the
-  // reverse: sweeps from the deepest generation upward so every parent
-  // group ends up centered above the mid-point of its children.
-  // Spouse groups are moved as a unit to stay adjacent.
+  // ── Step 9: Re-center generation-0 (root) nodes above their children ──
+  // Only generation 0 is adjusted — those nodes have no parents above them
+  // so they can be moved freely without breaking any family group placement.
+  // All other generations were already correctly grouped in Step 7 and must
+  // not be disturbed (moving them causes interleaving of different families).
   {
-    const sortedDesc = [...byGen.keys()].sort((a, b) => b - a); // highest gen first
-    sortedDesc.forEach(gen => {
-      const genIds = byGen.get(gen);
-
-      // Build spouse groups for this generation
+    const gen0ids = byGen.get(0);
+    if (gen0ids && gen0ids.length > 0) {
+      // Build spouse groups for generation 0
       const done   = new Set();
       const groups = [];
-      genIds.forEach(id => {
+      gen0ids.forEach(id => {
         if (done.has(id)) return;
         done.add(id);
         const grp = [id];
         const p   = getPerson(id);
         (p?.spouses || []).forEach(sid => {
-          if (genIds.includes(sid) && !done.has(sid)) { done.add(sid); grp.push(sid); }
+          if (gen0ids.includes(sid) && !done.has(sid)) { done.add(sid); grp.push(sid); }
         });
         groups.push(grp);
       });
 
-      // Re-center each group above the mid-point of all its children.
-      // Use reverse lookup (child.parents) as source of truth — same as drawLines —
-      // so centering works even when parent.children is out of sync.
+      // Re-center each group above the mid-point of all its direct children.
+      // Use reverse lookup (child.parents) as the source of truth.
       groups.forEach(grp => {
         const grpSet    = new Set(grp);
         const childMids = [];
@@ -1778,7 +1775,7 @@ function layoutTree() {
             childMids.push(cp.x + NODE_W / 2);
           }
         });
-        if (childMids.length === 0) return; // no positioned children – don't move
+        if (childMids.length === 0) return; // no positioned children — don't move
         const midChild = (Math.min(...childMids) + Math.max(...childMids)) / 2;
         const grpW     = grp.length * NODE_W + (grp.length - 1) * H_GAP;
         const newStart = Math.round(midChild - grpW / 2);
@@ -1788,16 +1785,16 @@ function layoutTree() {
         });
       });
 
-      // Re-apply overlap correction left-to-right for this row
-      const rowNodes = genIds.map(id => ({ pos: positions.get(id) })).filter(n => n.pos);
-      rowNodes.sort((a, b) => a.pos.x - b.pos.x);
-      for (let i = 1; i < rowNodes.length; i++) {
-        const prev = rowNodes[i - 1].pos;
-        const curr = rowNodes[i].pos;
+      // Re-apply overlap correction left-to-right for generation 0 only
+      const g0nodes = gen0ids.map(id => ({ pos: positions.get(id) })).filter(n => n.pos);
+      g0nodes.sort((a, b) => a.pos.x - b.pos.x);
+      for (let i = 1; i < g0nodes.length; i++) {
+        const prev = g0nodes[i - 1].pos;
+        const curr = g0nodes[i].pos;
         const minX = prev.x + NODE_W + H_GAP;
         if (curr.x < minX) curr.x = minX;
       }
-    });
+    }
   }
 
   return positions;
