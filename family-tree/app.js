@@ -1831,20 +1831,27 @@ function layoutTree() {
         });
       });
 
-      // ── Gen-0 only: light overlap correction ─────────────────────────
-      // Multiple disconnected root families can land on each other after
-      // centering; nudge them apart.  Other generations are left as-is
-      // because Step 7's family-group layout already ensures proper spacing.
-      if (gen === 0) {
-        const g0nodes = genIds
-          .map(id => ({ id, pos: positions.get(id) }))
-          .filter(n => n.pos)
-          .sort((a, b) => a.pos.x - b.pos.x);
-        for (let i = 1; i < g0nodes.length; i++) {
-          const prev = g0nodes[i - 1].pos;
-          const curr = g0nodes[i].pos;
-          const minX = prev.x + NODE_W + H_GAP;
-          if (curr.x < minX) curr.x = minX;
+      // ── Group-level overlap correction (all generations) ─────────────
+      // After centering, groups may overlap.  Push them apart as whole
+      // units sorted left-to-right so no individual node cards touch.
+      // Operating on whole groups (not individual nodes) preserves family
+      // groupings — e.g. Napoleon shifts right as a unit rather than
+      // slipping between Arlan and John Manas.
+      const sortedGroups = [...groups].sort((a, b) => {
+        const lx = grp => Math.min(...grp.map(id => positions.get(id)?.x ?? Infinity));
+        return lx(a) - lx(b);
+      });
+      for (let i = 1; i < sortedGroups.length; i++) {
+        const prevGrp = sortedGroups[i - 1];
+        const currGrp = sortedGroups[i];
+        const prevRight = Math.max(...prevGrp.map(id => (positions.get(id)?.x ?? 0) + NODE_W));
+        const currLeft  = Math.min(...currGrp.map(id => positions.get(id)?.x ?? Infinity));
+        const shift = prevRight + H_GAP - currLeft;
+        if (shift > 0) {
+          currGrp.forEach(id => {
+            const pos = positions.get(id);
+            if (pos) pos.x += shift;
+          });
         }
       }
     });
