@@ -1766,15 +1766,17 @@ function layoutTree() {
         groups.push(grp);
       });
 
-      // Re-center each group above the mid-point of all its children
+      // Re-center each group above the mid-point of all its children.
+      // Use reverse lookup (child.parents) as source of truth — same as drawLines —
+      // so centering works even when parent.children is out of sync.
       groups.forEach(grp => {
+        const grpSet    = new Set(grp);
         const childMids = [];
-        grp.forEach(id => {
-          const p = getPerson(id);
-          (p?.children || []).forEach(cid => {
-            const cp = positions.get(cid);
-            if (cp) childMids.push(cp.x + NODE_W / 2);
-          });
+        positions.forEach((cp, cid) => {
+          const child = getPerson(cid);
+          if (child && (child.parents || []).some(pid => grpSet.has(pid))) {
+            childMids.push(cp.x + NODE_W / 2);
+          }
         });
         if (childMids.length === 0) return; // no positioned children – don't move
         const midChild = (Math.min(...childMids) + Math.max(...childMids)) / 2;
