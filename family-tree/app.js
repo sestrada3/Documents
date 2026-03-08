@@ -1742,40 +1742,86 @@ function layoutTree() {
     }
   });
 
-  // ── Step 9: Re-center generation-0 (root) nodes above their children ──
-  // Only generation 0 is adjusted — those nodes have no parents above them
-  // so they can be moved freely without breaking any family group placement.
-  // All other generations were already correctly grouped in Step 7 and must
-  // not be disturbed (moving them causes interleaving of different families).
+  // ── Step 9: Bottom-up centering — every parent above its children ────────
+  // Sweeps from the deepest generation upward.  For each generation, nodes are
+  // grouped by FAMILY UNIT (spouses + co-parents who share a child).  Each
+  // group is moved as a unit to sit centred above the mid-point of its
+  // children's current positions.
+  //
+  // Key design decisions:
+  //   • Groups include CO-PARENTS (not just spouses) so Sasha+Lenox move
+  //     together above Mallory rather than independently colliding.
+  //   • NO overlap correction is applied after centering (except for gen 0).
+  //     Step 7 already guarantees non-overlapping family groups; the overlap
+  //     correction was what caused Napoleon to slip between unrelated families.
+  //   • Gen 0 gets a light overlap correction so multiple unrelated root
+  //     families don't pile on top of each other.
   {
-    const gen0ids = byGen.get(0);
-    if (gen0ids && gen0ids.length > 0) {
-      // Build spouse groups for generation 0
+    const sortedDesc = [...byGen.keys()].sort((a, b) => b - a); // deepest first
+
+    sortedDesc.forEach(gen => {
+      const genIds = byGen.get(gen);
+
+      // ── Build family-unit groups ──────────────────────────────────────
+      // Start with spouses, then expand each group by pulling in any
+      // co-parent (same-gen person who shares a positioned child with
+      // someone already in the group).
       const done   = new Set();
       const groups = [];
-      gen0ids.forEach(id => {
+
+      genIds.forEach(id => {
         if (done.has(id)) return;
         done.add(id);
         const grp = [id];
-        const p   = getPerson(id);
+
+        // 1. Add spouses in this generation
+        const p = getPerson(id);
         (p?.spouses || []).forEach(sid => {
-          if (gen0ids.includes(sid) && !done.has(sid)) { done.add(sid); grp.push(sid); }
+          if (genIds.includes(sid) && !done.has(sid)) { done.add(sid); grp.push(sid); }
         });
+
+        // 2. Expand: add co-parents who share a positioned child with anyone in grp
+        //    Repeat until stable so transitive co-parent chains are captured.
+        let expanded = true;
+        while (expanded) {
+          expanded = false;
+          [...grp].forEach(gid => {
+            positions.forEach((_cp, cid) => {
+              const child = getPerson(cid);
+              if (!child || !(child.parents || []).includes(gid)) return;
+              (child.parents || []).forEach(pid => {
+                if (!genIds.includes(pid) || done.has(pid)) return;
+                done.add(pid);
+                grp.push(pid);
+                expanded = true;
+              });
+            });
+          });
+        }
+
+        // Sort group members left-to-right by their current x so the unit
+        // stays in the same relative order after being re-positioned.
+        grp.sort((a, b) => {
+          const pa = positions.get(a), pb = positions.get(b);
+          return (pa ? pa.x : 0) - (pb ? pb.x : 0);
+        });
+
         groups.push(grp);
       });
 
-      // Re-center each group above the mid-point of all its direct children.
-      // Use reverse lookup (child.parents) as the source of truth.
+      // ── Centre each group above the midpoint of its children ─────────
       groups.forEach(grp => {
         const grpSet    = new Set(grp);
         const childMids = [];
         positions.forEach((cp, cid) => {
           const child = getPerson(cid);
+          // Use child.parents as source of truth (same as drawLines)
           if (child && (child.parents || []).some(pid => grpSet.has(pid))) {
             childMids.push(cp.x + NODE_W / 2);
           }
         });
-        if (childMids.length === 0) return; // no positioned children — don't move
+        if (childMids.length === 0) return; // leaf group — don't move
+
         const midChild = (Math.min(...childMids) + Math.max(...childMids)) / 2;
         const grpW     = grp.length * NODE_W + (grp.length - 1) * H_GAP;
         const newStart = Math.round(midChild - grpW / 2);
@@ -1785,16 +1831,23 @@ function layoutTree() {
         });
       });
 
-      // Re-apply overlap correction left-to-right for generation 0 only
-      const g0nodes = gen0ids.map(id => ({ pos: positions.get(id) })).filter(n => n.pos);
-      g0nodes.sort((a, b) => a.pos.x - b.pos.x);
-      for (let i = 1; i < g0nodes.length; i++) {
-        const prev = g0nodes[i - 1].pos;
-        const curr = g0nodes[i].pos;
-        const minX = prev.x + NODE_W + H_GAP;
-        if (curr.x < minX) curr.x = minX;
+      // ── Gen-0 only: light overlap correction ─────────────────────────
+      // Multiple disconnected root families can land on each other after
+      // centering; nudge them apart.  Other generations are left as-is
+      // because Step 7's family-group layout already ensures proper spacing.
+      if (gen === 0) {
+        const g0nodes = genIds
+          .map(id => ({ id, pos: positions.get(id) }))
+          .filter(n => n.pos)
+          .sort((a, b) => a.pos.x - b.pos.x);
+        for (let i = 1; i < g0nodes.length; i++) {
+          const prev = g0nodes[i - 1].pos;
+          const curr = g0nodes[i].pos;
+          const minX = prev.x + NODE_W + H_GAP;
+          if (curr.x < minX) curr.x = minX;
+        }
       }
-    }
+    });
   }
 
   return positions;
