@@ -1943,53 +1943,6 @@ function drawLines(positions) {
     return el;
   };
 
-  // ── STEP 0: Family group background boxes ────────────────────
-  // Draw a soft rounded rect behind each nuclear family unit
-  // (parents + their children) so groups are visually distinct.
-  const BOX_PAD  = 18;
-  const BOX_R    = 14;
-  const drawnBox = new Set();
-  people.forEach(p => {
-    if (!positions.has(p.id)) return;
-    if (!(p.children || []).length) return;
-    const childPosArr = (p.children || []).map(cid => positions.get(cid)).filter(Boolean);
-    if (!childPosArr.length) return;
-
-    // Gather all members: this person + spouses on same row + children
-    const memberPositions = [positions.get(p.id)];
-    (p.spouses || []).forEach(sid => {
-      const sp = positions.get(sid);
-      if (sp && sp.y === positions.get(p.id).y) memberPositions.push(sp);
-    });
-    childPosArr.forEach(cp => memberPositions.push(cp));
-
-    // Deduplicate box by sorted member IDs
-    const memberIds = memberPositions.map((_, i) => i).join('-');
-    const boxKey = memberPositions.map(mp => `${mp.x},${mp.y}`).sort().join('|');
-    if (drawnBox.has(boxKey)) return;
-    drawnBox.add(boxKey);
-
-    const xs = memberPositions.map(mp => mp.x);
-    const ys = memberPositions.map(mp => mp.y);
-    const x1 = Math.min(...xs) - BOX_PAD;
-    const y1 = Math.min(...ys) - BOX_PAD;
-    const x2 = Math.max(...xs) + NODE_W + BOX_PAD;
-    const y2 = Math.max(...ys) + NODE_H + BOX_PAD;
-
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', x1);
-    rect.setAttribute('y', y1);
-    rect.setAttribute('width',  x2 - x1);
-    rect.setAttribute('height', y2 - y1);
-    rect.setAttribute('rx', BOX_R);
-    rect.setAttribute('ry', BOX_R);
-    rect.setAttribute('fill', 'rgba(241,245,249,0.55)');
-    rect.setAttribute('stroke', '#cbd5e1');
-    rect.setAttribute('stroke-width', '1.5');
-    rect.setAttribute('stroke-dasharray', '5,4');
-    svgLines.insertBefore(rect, svgLines.firstChild); // draw behind everything else
-  });
-
   // ── STEP 1: Spouse / Partner connector ───────────────────────
   //   Married  → double lines + ♥  (pink)
   //   Partner  → single solid line + ∞  (blue)
@@ -2059,7 +2012,7 @@ function drawLines(positions) {
           svgLines.appendChild(makeArc(x1, barY, cpX, cpY, x2, barY, '#3b82f6', 2));
           svgLines.appendChild(makeText(cpX, symY, '∞', '#3b82f6', '11'));
         } else if (relType === 'ex') {
-          svgLines.appendChild(makeArc(x1, barY, cpX, cpY, x2, barY, '#f87171', 2, '6,4'));
+          svgLines.appendChild(makeArc(x1, barY, cpX, cpY, x2, barY, '#f87171', 2));
           svgLines.appendChild(makeText(cpX, symY, '✕', '#f87171', '10'));
         }
       } else {
@@ -2072,58 +2025,10 @@ function drawLines(positions) {
           svgLines.appendChild(makeLine(x1, barY, x2, barY, '#3b82f6', 2));
           svgLines.appendChild(makeText(midX, barY - 9, '∞', '#3b82f6', '11'));
         } else if (relType === 'ex') {
-          svgLines.appendChild(makeLine(x1, barY, x2, barY, '#f87171', 2, '6,4'));
+          svgLines.appendChild(makeLine(x1, barY, x2, barY, '#f87171', 2));
           svgLines.appendChild(makeText(midX, barY - 9, '✕', '#f87171', '10'));
         }
       }
-    });
-  });
-
-  // ── STEP 2: Co-parent (not married) dashed connector ─────────
-  //   Single dashed horizontal line at node vertical-centre.
-  //   Only drawn when both parents are on the same generation row
-  //   AND are directly adjacent (no other nodes between them).
-  const drawnCo = new Set();
-  people.forEach(p => {
-    if (!positions.has(p.id)) return;
-    const pPos = positions.get(p.id);
-    (p.children || []).forEach(cid => {
-      const child = getPerson(cid);
-      if (!child) return;
-      (child.parents || []).forEach(coId => {
-        if (coId === p.id) return;
-        if ((p.spouses || []).includes(coId)) return; // already drawn as spouse
-        const key = [p.id, coId].sort().join('-');
-        if (drawnCo.has(key)) return;
-        drawnCo.add(key);
-        const coPos = positions.get(coId);
-        if (!coPos) return;
-
-        // Only draw if same row
-        if (pPos.y !== coPos.y) return;
-
-        const leftPos  = pPos.x <= coPos.x ? pPos  : coPos;
-        const rightPos = pPos.x <= coPos.x ? coPos : pPos;
-
-        // Only draw if directly adjacent — no other node falls in the gap between them
-        const gapStart = leftPos.x + NODE_W; // right edge of left co-parent
-        const gapEnd   = rightPos.x;         // left  edge of right co-parent
-        const hasNodeBetween = [...positions.values()].some(pp => {
-          if (pp.y !== pPos.y) return false;
-          // Skip the two co-parents themselves
-          if (pp.x === leftPos.x) return false;
-          if (pp.x === rightPos.x) return false;
-          // Does any other node overlap the gap between the co-parents?
-          return pp.x + NODE_W > gapStart && pp.x < gapEnd;
-        });
-        if (hasNodeBetween) return;
-
-        const barY = leftPos.y + NODE_H / 2;
-        const x1   = gapStart;
-        const x2   = gapEnd;
-
-        svgLines.appendChild(makeLine(x1, barY, x2, barY, CO_COLOR, 1.5, DASH_STYLE));
-      });
     });
   });
 
@@ -2311,6 +2216,61 @@ function applyTransform() {
   treeCanvas.style.transform = t;
   treeSvg.style.transform    = t;
   treeSvg.style.transformOrigin = '0 0';
+}
+
+// ── Background Tree ──────────────────────────────────────────
+/**
+ * Draw a decorative bare-branch tree into the fixed background SVG.
+ * The tree is drawn in wrapper coordinates (not pan/zoom transformed)
+ * so it stays centred behind the data as the user navigates.
+ */
+function drawBackgroundTree() {
+  const svg = document.getElementById('treeBgSvg');
+  if (!svg) return;
+  svg.innerHTML = '';
+
+  const W = treeWrapper.clientWidth  || 1200;
+  const H = treeWrapper.clientHeight || 800;
+
+  const MAX_DEPTH  = 9;
+  const STROKE_CLR = 'rgba(101,72,36,0.11)'; // warm sepia, very subtle
+
+  // Recursive bezier-curve branch
+  function branch(x1, y1, angle, length, depth, spread) {
+    if (depth > MAX_DEPTH || length < 2.5) return;
+
+    // Slight organic bend in the control point
+    const bend = Math.sin(depth * 1.9 + angle * 2.7) * 0.22;
+    const cpx  = x1 + Math.cos(angle + bend) * length * 0.52;
+    const cpy  = y1 + Math.sin(angle + bend) * length * 0.52;
+    const x2   = x1 + Math.cos(angle) * length;
+    const y2   = y1 + Math.sin(angle) * length;
+
+    const strokeW = Math.max(0.4, (MAX_DEPTH - depth + 1) * 1.7);
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    el.setAttribute('d', `M ${x1.toFixed(1)} ${y1.toFixed(1)} Q ${cpx.toFixed(1)} ${cpy.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+    el.setAttribute('stroke', STROKE_CLR);
+    el.setAttribute('stroke-width', strokeW);
+    el.setAttribute('fill', 'none');
+    el.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(el);
+
+    const nextLen    = length * 0.67;
+    const nextSpread = spread * 0.93;
+    branch(x2, y2, angle - nextSpread, nextLen, depth + 1, nextSpread);
+    branch(x2, y2, angle + nextSpread, nextLen, depth + 1, nextSpread);
+    // Extra centre branch on lower levels for fuller canopy
+    if (depth < 4) {
+      const midAngle = angle + Math.sin(depth * 1.3) * 0.12;
+      branch(x2, y2, midAngle, nextLen * 0.82, depth + 2, nextSpread * 0.78);
+    }
+  }
+
+  // Trunk starts slightly below the visible bottom, grows upward
+  const startX    = W / 2;
+  const startY    = H + 30;
+  const trunkLen  = H * 0.46;
+  branch(startX, startY, -Math.PI / 2, trunkLen, 0, 0.54);
 }
 
 // ── Fit to View ──────────────────────────────────────────────
@@ -3018,6 +2978,7 @@ function init() {
 
   initTabs();
   initPanZoom();
+  drawBackgroundTree();
   initLocationAutocomplete();
 
   // Init chip search for each relationship type

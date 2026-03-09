@@ -54,6 +54,8 @@
         <span class="tree-hint">Drag to pan &bull; Scroll to zoom &bull; Click a person to view details</span>
       </div>
       <div class="tree-wrapper" id="treeWrapper">
+        <!-- Decorative background tree (drawn once by JS, sits behind everything) -->
+        <svg id="treeBgSvg" class="tree-bg-svg" xmlns="http://www.w3.org/2000/svg"></svg>
         <svg id="treeSvg" class="tree-svg" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
