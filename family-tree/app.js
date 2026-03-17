@@ -1908,9 +1908,9 @@ function renderTree() {
 function drawLines(positions) {
   svgLines.innerHTML = '';
 
-  const LINE_COLOR   = '#1e293b'; // dark navy
+  const LINE_COLOR   = '#5c3d1e'; // warm sepia brown
   const LINE_WIDTH   = 2;
-  const CO_COLOR     = '#94a3b8'; // grey for co-parent dashed line
+  const CO_COLOR     = '#a08060'; // warm tan for co-parent dashed line
   const DASH_STYLE   = '7,5';
 
   // ── helpers ──────────────────────────────────────────────────
@@ -2218,11 +2218,11 @@ function applyTransform() {
   treeSvg.style.transformOrigin = '0 0';
 }
 
-// ── Background Tree ──────────────────────────────────────────
+// ── Background Tree + Leaf Layer ─────────────────────────────
 /**
- * Draw a decorative bare-branch tree into the fixed background SVG.
- * The tree is drawn in wrapper coordinates (not pan/zoom transformed)
- * so it stays centred behind the data as the user navigates.
+ * Draw a decorative sepia bare-branch tree into the fixed background SVG,
+ * then scatter semi-transparent autumn leaves across the whole viewport.
+ * Everything stays fixed (not pan/zoom transformed) — it's pure decoration.
  */
 function drawBackgroundTree() {
   const svg = document.getElementById('treeBgSvg');
@@ -2232,45 +2232,71 @@ function drawBackgroundTree() {
   const W = treeWrapper.clientWidth  || 1200;
   const H = treeWrapper.clientHeight || 800;
 
-  const MAX_DEPTH  = 9;
-  const STROKE_CLR = 'rgba(101,72,36,0.11)'; // warm sepia, very subtle
+  // ── 1. Scattered semi-transparent leaves (drawn first, behind branches) ──
+  const LEAF_COLORS = [
+    'rgba(175,125,35,0.13)',   // amber gold
+    'rgba(115,140,55,0.11)',   // olive green
+    'rgba(158,85,35,0.12)',    // rust brown
+    'rgba(195,155,55,0.09)',   // golden tan
+    'rgba(75,118,55,0.10)',    // forest green
+    'rgba(148,95,28,0.14)',    // warm brown
+    'rgba(188,145,62,0.08)',   // light gold
+    'rgba(130,65,30,0.12)',    // deep rust
+    'rgba(90,130,60,0.09)',    // sage green
+    'rgba(200,130,50,0.11)',   // orange tan
+  ];
 
-  // Recursive bezier-curve branch
-  function branch(x1, y1, angle, length, depth, spread) {
-    if (depth > MAX_DEPTH || length < 2.5) return;
+  /**
+   * Draw a single simple leaf shape (elliptical teardrop) centred at cx,cy.
+   * @param {number} cx - centre x
+   * @param {number} cy - centre y
+   * @param {number} size - half-length of the leaf
+   * @param {number} angleDeg - rotation in degrees
+   * @param {string} color - fill colour (rgba)
+   */
+  function drawLeaf(cx, cy, size, angleDeg, color) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', `translate(${cx.toFixed(1)},${cy.toFixed(1)}) rotate(${angleDeg.toFixed(1)})`);
 
-    // Slight organic bend in the control point
-    const bend = Math.sin(depth * 1.9 + angle * 2.7) * 0.22;
-    const cpx  = x1 + Math.cos(angle + bend) * length * 0.52;
-    const cpy  = y1 + Math.sin(angle + bend) * length * 0.52;
-    const x2   = x1 + Math.cos(angle) * length;
-    const y2   = y1 + Math.sin(angle) * length;
+    // Leaf body — teardrop bezier (wide in middle, pointed at both ends)
+    const s = size;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d',
+      `M 0,0 ` +
+      `C ${(-s * 0.28).toFixed(1)},${(-s * 0.55).toFixed(1)} ${(s * 0.72).toFixed(1)},${(-s * 1.05).toFixed(1)} ${s.toFixed(1)},0 ` +
+      `C ${(s * 0.72).toFixed(1)},${(s * 1.05).toFixed(1)} ${(-s * 0.28).toFixed(1)},${(s * 0.55).toFixed(1)} 0,0 Z`
+    );
+    path.setAttribute('fill', color);
+    path.setAttribute('stroke', 'none');
+    g.appendChild(path);
 
-    const strokeW = Math.max(0.4, (MAX_DEPTH - depth + 1) * 1.7);
-    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    el.setAttribute('d', `M ${x1.toFixed(1)} ${y1.toFixed(1)} Q ${cpx.toFixed(1)} ${cpy.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-    el.setAttribute('stroke', STROKE_CLR);
-    el.setAttribute('stroke-width', strokeW);
-    el.setAttribute('fill', 'none');
-    el.setAttribute('stroke-linecap', 'round');
-    svg.appendChild(el);
+    // Central vein — very faint
+    const veinColor = color.replace(/[\d.]+\)$/, '0.25)');
+    const vein = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    vein.setAttribute('x1', '0');   vein.setAttribute('y1', '0');
+    vein.setAttribute('x2', s.toFixed(1)); vein.setAttribute('y2', '0');
+    vein.setAttribute('stroke', veinColor);
+    vein.setAttribute('stroke-width', '0.6');
+    g.appendChild(vein);
 
-    const nextLen    = length * 0.67;
-    const nextSpread = spread * 0.93;
-    branch(x2, y2, angle - nextSpread, nextLen, depth + 1, nextSpread);
-    branch(x2, y2, angle + nextSpread, nextLen, depth + 1, nextSpread);
-    // Extra centre branch on lower levels for fuller canopy
-    if (depth < 4) {
-      const midAngle = angle + Math.sin(depth * 1.3) * 0.12;
-      branch(x2, y2, midAngle, nextLen * 0.82, depth + 2, nextSpread * 0.78);
-    }
+    svg.appendChild(g);
   }
 
-  // Trunk starts slightly below the visible bottom, grows upward
-  const startX    = W / 2;
-  const startY    = H + 30;
-  const trunkLen  = H * 0.46;
-  branch(startX, startY, -Math.PI / 2, trunkLen, 0, 0.54);
+  // Scatter leaves pseudo-randomly across the entire viewport
+  // Use a seeded deterministic sequence so the pattern is stable on re-draw
+  const LEAF_COUNT = 90;
+  let sx = 0.7236; // seeded "random" state — keeps the same positions each call
+  function nextRand() { sx = (sx * 16807 + 0) % 1; return sx; }
+
+  for (let i = 0; i < LEAF_COUNT; i++) {
+    const cx      = nextRand() * W;
+    const cy      = nextRand() * H;
+    const size    = 8 + nextRand() * 26;   // 8 – 34 px
+    const angle   = nextRand() * 360;
+    const colorIdx = Math.floor(nextRand() * LEAF_COLORS.length);
+    drawLeaf(cx, cy, size, angle, LEAF_COLORS[colorIdx]);
+  }
+
 }
 
 // ── Fit to View ──────────────────────────────────────────────
