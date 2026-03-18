@@ -267,20 +267,31 @@ main { margin-top: 60px; height: calc(100vh - 60px); overflow: hidden; }
   color: var(--text-muted);
 }
 
-/* Tree viewport — warm parchment dot grid */
+/* Tree viewport — parchment base + sepia tree background image */
 .tree-wrapper {
   position: relative;
   flex: 1;
   overflow: hidden;
-  background:
-    radial-gradient(circle, #c4a882 1px, transparent 1px),
-    var(--bg);
-  background-size: 28px 28px;
+  background: var(--bg);
   cursor: grab;
 }
 .tree-wrapper.dragging { cursor: grabbing; }
 
-/* Decorative background SVG (leaves + bare tree) — sits beneath everything */
+/* Semi-transparent tree image — sits behind everything */
+.tree-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('tree-bg.jpg');
+  background-size: cover;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  opacity: 0.28;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Decorative background SVG layer (kept for structure, no longer draws leaves) */
 .tree-bg-svg {
   position: absolute;
   top: 0; left: 0;
