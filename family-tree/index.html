@@ -42,10 +42,14 @@
         <button class="btn btn-connect" id="connectModeBtn" title="Click two people to link them">🔗 Connect</button>
         <button class="btn btn-repair" id="repairDataBtn" title="Fix orphaned or one-sided relationship links">🔧 Repair Data</button>
         <div class="zoom-controls">
-          <button class="btn btn-icon" id="zoomIn" title="Zoom In">＋</button>
-          <button class="btn btn-icon" id="zoomOut" title="Zoom Out">－</button>
-          <button class="btn btn-icon" id="zoomReset" title="Reset View">⌂</button>
-          <button class="btn btn-icon" id="zoomFit" title="Fit All to View">⤢</button>
+          <button class="btn btn-icon" id="zoomIn"    title="Zoom In (=)">＋</button>
+          <button class="btn btn-icon" id="zoomOut"   title="Zoom Out (-)">－</button>
+          <button class="btn btn-icon" id="zoomReset" title="Reset View (Home)">⌂</button>
+          <button class="btn btn-icon" id="zoomFit"   title="Fit All to View">⤢</button>
+          <div class="zoom-slider-wrap">
+            <input type="range" id="zoomSlider" class="zoom-slider" min="15" max="300" step="1" value="100" title="Drag to zoom"/>
+            <span id="zoomLabel" class="zoom-label">100%</span>
+          </div>
         </div>
         <div class="tree-search-wrap">
           <input type="text" id="treeSearch" class="tree-search-input" placeholder="🔍 Search people…" autocomplete="off" />
@@ -67,6 +71,9 @@
         <div class="tree-canvas" id="treeCanvas">
           <!-- Person node cards rendered here by JS -->
         </div>
+        <!-- Minimap -->
+        <canvas id="minimapCanvas" class="minimap-canvas" title="Click or drag to navigate the tree"></canvas>
+
         <!-- Legend -->
         <div class="tree-legend" id="treeLegend">
           <div class="legend-title">Legend</div>

@@ -291,6 +291,7 @@ const relState = {
 // ── Layout State ────────────────────────────────────────────
 let transform  = { x: 0, y: 0, scale: 1 };
 let autoFitted = false; // tracks whether fit-to-view has run after latest data load
+let lastMinimapParams = null; // cached world→minimap mapping, used by click handler
 const NODE_W  = 100;
 const NODE_H  = 130;
 const H_GAP   = 60;
@@ -2216,6 +2217,173 @@ function applyTransform() {
   treeCanvas.style.transform = t;
   treeSvg.style.transform    = t;
   treeSvg.style.transformOrigin = '0 0';
+
+  // Sync zoom slider + label
+  const slider = document.getElementById('zoomSlider');
+  const label  = document.getElementById('zoomLabel');
+  const pct    = Math.round(transform.scale * 100);
+  if (slider) slider.value = pct;
+  if (label)  label.textContent = pct + '%';
+
+  // Refresh minimap viewport rect
+  drawMinimap();
+}
+
+// ── Minimap ───────────────────────────────────────────────────
+/**
+ * Draw a thumbnail overview of the whole tree onto the minimap canvas.
+ * Each person node is a small coloured rectangle; the current viewport
+ * is shown as a semi-transparent brown rectangle with a border.
+ * Stores world→minimap mapping in lastMinimapParams for click handling.
+ */
+function drawMinimap() {
+  const canvas = document.getElementById('minimapCanvas');
+  if (!canvas) return;
+
+  const nodes = treeCanvas.querySelectorAll('.person-node');
+  if (nodes.length === 0) {
+    canvas.classList.add('hidden');
+    lastMinimapParams = null;
+    return;
+  }
+  canvas.classList.remove('hidden');
+
+  const dpr  = window.devicePixelRatio || 1;
+  const cssW = canvas.offsetWidth  || 190;
+  const cssH = canvas.offsetHeight || 126;
+
+  // Resize backing buffer only when necessary (avoids flicker)
+  if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+    canvas.width  = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
+
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Background
+  ctx.clearRect(0, 0, cssW, cssH);
+  ctx.fillStyle = 'rgba(245,236,224,0.92)';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  // World bounds
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  nodes.forEach(node => {
+    const x = parseFloat(node.style.left) || 0;
+    const y = parseFloat(node.style.top)  || 0;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + NODE_W);
+    maxY = Math.max(maxY, y + NODE_H);
+  });
+
+  const PAD    = 8;
+  const worldW = maxX - minX;
+  const worldH = maxY - minY;
+  const mmScale = Math.min((cssW - PAD * 2) / worldW, (cssH - PAD * 2) / worldH);
+  const mmOffX  = PAD + ((cssW - PAD * 2) - worldW * mmScale) / 2;
+  const mmOffY  = PAD + ((cssH - PAD * 2) - worldH * mmScale) / 2;
+
+  lastMinimapParams = { mmScale, mmOffX, mmOffY, minX, minY };
+
+  // Draw node rectangles
+  ctx.globalAlpha = 0.75;
+  nodes.forEach(node => {
+    const x  = parseFloat(node.style.left) || 0;
+    const y  = parseFloat(node.style.top)  || 0;
+    const mx = mmOffX + (x - minX) * mmScale;
+    const my = mmOffY + (y - minY) * mmScale;
+    const mw = Math.max(2, NODE_W * mmScale);
+    const mh = Math.max(1, NODE_H * mmScale);
+
+    if      (node.classList.contains('male'))   ctx.fillStyle = '#5c7fa0';
+    else if (node.classList.contains('female')) ctx.fillStyle = '#b5657a';
+    else if (node.classList.contains('nonbinary') ||
+             node.classList.contains('other'))  ctx.fillStyle = '#8b6ba8';
+    else                                        ctx.fillStyle = '#c4a882';
+
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(mx, my, mw, mh, 2);
+    } else {
+      ctx.rect(mx, my, mw, mh);
+    }
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Viewport rectangle
+  const wr      = treeWrapper.getBoundingClientRect();
+  const vLeft   = -transform.x / transform.scale;
+  const vTop    = -transform.y / transform.scale;
+  const vRight  = vLeft + wr.width  / transform.scale;
+  const vBottom = vTop  + wr.height / transform.scale;
+
+  const vx = mmOffX + (vLeft  - minX) * mmScale;
+  const vy = mmOffY + (vTop   - minY) * mmScale;
+  const vw = (vRight  - vLeft)  * mmScale;
+  const vh = (vBottom - vTop)   * mmScale;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, cssW, cssH);
+  ctx.clip();
+  ctx.fillStyle   = 'rgba(139,94,60,0.10)';
+  ctx.strokeStyle = '#8b5e3c';
+  ctx.lineWidth   = 1.5;
+  ctx.fillRect(vx, vy, vw, vh);
+  ctx.strokeRect(vx, vy, vw, vh);
+  ctx.restore();
+}
+
+/**
+ * Set up click and drag on the minimap canvas so the user can navigate
+ * the tree by clicking/dragging anywhere on the minimap thumbnail.
+ */
+function initMinimap() {
+  const canvas = document.getElementById('minimapCanvas');
+  if (!canvas) return;
+
+  function jumpToPoint(clientX, clientY) {
+    if (!lastMinimapParams) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx   = clientX - rect.left;
+    const my   = clientY - rect.top;
+    const { mmScale, mmOffX, mmOffY, minX, minY } = lastMinimapParams;
+
+    // Minimap pixel → world coordinate
+    const worldX = (mx - mmOffX) / mmScale + minX;
+    const worldY = (my - mmOffY) / mmScale + minY;
+
+    // Centre viewport on this world point
+    const wr = treeWrapper.getBoundingClientRect();
+    transform.x = wr.width  / 2 - worldX * transform.scale;
+    transform.y = wr.height / 2 - worldY * transform.scale;
+    applyTransform();
+  }
+
+  let mmDragging = false;
+  canvas.addEventListener('mousedown', e => {
+    e.stopPropagation(); // don't trigger treeWrapper pan
+    mmDragging = true;
+    jumpToPoint(e.clientX, e.clientY);
+  });
+  window.addEventListener('mousemove', e => {
+    if (mmDragging) jumpToPoint(e.clientX, e.clientY);
+  });
+  window.addEventListener('mouseup', () => { mmDragging = false; });
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    jumpToPoint(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: false });
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    jumpToPoint(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: false });
+
+  // Redraw viewport rect on window resize (tree doesn't re-render but viewport changes)
+  window.addEventListener('resize', drawMinimap);
 }
 
 // ── Background image is handled entirely by CSS .tree-wrapper::before ────────
@@ -2935,6 +3103,7 @@ function init() {
 
   buildGlossary();
   initTreeSearch();
+  initMinimap();
   bindEvents();
   initFirebase(); // connects to Firebase and triggers initial render via listener
 }
@@ -3014,6 +3183,53 @@ function bindEvents() {
   document.getElementById('repairDataBtn').addEventListener('click', repairData);
   document.getElementById('zoomFit').addEventListener('click', fitToView);
   document.getElementById('glossarySearch').addEventListener('input', e => filterGlossary(e.target.value));
+
+  // ── Zoom slider ────────────────────────────────────────────
+  document.getElementById('zoomSlider').addEventListener('input', e => {
+    const newScale = parseInt(e.target.value, 10) / 100;
+    const wr = treeWrapper.getBoundingClientRect();
+    const cx = wr.width  / 2;
+    const cy = wr.height / 2;
+    // Keep zoom anchored to the centre of the wrapper
+    const ratio = newScale / transform.scale;
+    transform.x = cx - (cx - transform.x) * ratio;
+    transform.y = cy - (cy - transform.y) * ratio;
+    transform.scale = newScale;
+    applyTransform();
+  });
+
+  // ── Keyboard navigation (only when not focused on an input field) ──
+  document.addEventListener('keydown', e => {
+    const tag = document.activeElement ? document.activeElement.tagName : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    // Don't fire when any modal is open
+    if (!personModal.classList.contains('hidden') ||
+        !deleteModal.classList.contains('hidden')  ||
+        !quickAddModal.classList.contains('hidden')) return;
+
+    const PAN   = 80; // pixels per keypress (before scale)
+    const ZOOM  = 0.12;
+    switch (e.key) {
+      case 'ArrowLeft':  e.preventDefault(); transform.x += PAN; applyTransform(); break;
+      case 'ArrowRight': e.preventDefault(); transform.x -= PAN; applyTransform(); break;
+      case 'ArrowUp':    e.preventDefault(); transform.y += PAN; applyTransform(); break;
+      case 'ArrowDown':  e.preventDefault(); transform.y -= PAN; applyTransform(); break;
+      case '+': case '=':
+        e.preventDefault();
+        transform.scale = Math.min(3, transform.scale + ZOOM);
+        applyTransform();
+        break;
+      case '-': case '_':
+        e.preventDefault();
+        transform.scale = Math.max(0.15, transform.scale - ZOOM);
+        applyTransform();
+        break;
+      case 'Home':
+        e.preventDefault();
+        fitToView();
+        break;
+    }
+  });
 
   // ── Connect mode ──────────────────────────────────────────
   document.getElementById('connectModeBtn').addEventListener('click', toggleConnectMode);
